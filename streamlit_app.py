@@ -15,9 +15,18 @@ if src_path not in sys.path:
 from src.router import get_intent
 from src.visualizations import plot_executive_map
 
-# --- 1. SETUP PAGE CONFIG ---
+# --- 1. SETUP PAGE CONFIG & TITLE ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
-st.title("🧬 Merck Keytruda Provider Targeting Strategy AI Application")
+
+# Custom two-line centered title
+st.markdown("""
+    <div style="text-align: center;">
+        <h1 style="margin-bottom: 0px;">Merck Keytruda</h1>
+        <h2 style="margin-top: 0px; font-weight: normal; color: #555;">Provider Targeting Strategy AI Application</h2>
+    </div>
+""", unsafe_allow_html=True)
+
+st.markdown("---")
 
 # --- 2. DATA LOADING (Path: data/raw/) ---
 @st.cache_data
