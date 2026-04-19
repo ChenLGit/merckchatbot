@@ -116,8 +116,9 @@ with chat_col:
                     scorecard = get_hcp_scorecard(prompt, df)
                     
                     if scorecard:
-                        st.markdown("### 🎯 Target Opportunity Found")
-                        st.success(f"**Target:** {scorecard['type']} | **State:** {scorecard['state']}")
+                        # NEW: NPI is now the main header
+                        st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
+                        st.success(f"**State:** {scorecard['state']} | **Type:** {scorecard['type']}")
                         
                         st.markdown(f"""
                         **Opportunity Scorecard:**
@@ -125,6 +126,8 @@ with chat_col:
                         - **Medicare Payment Volume:** ${scorecard['payment']:,.0f}
                         - **Key Model Drivers:** {scorecard['drivers']}
                         """)
+                        
+                        # (AI Insight section remains the same)
                         
                         # --- STABLE AI INSIGHT ---
                         try:
