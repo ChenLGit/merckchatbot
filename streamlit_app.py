@@ -18,37 +18,38 @@ from src.visualizations import plot_executive_map
 # --- 1. SETUP PAGE CONFIG ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
-# --- 2. CREDITS BOX (Now in Sidebar) ---
-with st.sidebar:
+# --- 2. HEADER & CREDITS (Side-by-Side) ---
+# We use a 3:1 ratio to give the title more space
+col_title, col_credits = st.columns([3, 1], vertical_alignment="top")
+
+with col_title:
+    st.markdown("""
+        <div style="text-align: left;">
+            <h1 style="margin-bottom: 0px; font-size: 3rem; color: #00857c;">Merck Keytruda</h1>
+            <h2 style="margin-top: 0px; font-weight: normal; color: #555; font-size: 1.5rem;">
+                Provider Targeting Strategy AI Application
+            </h2>
+        </div>
+    """, unsafe_allow_html=True)
+
+with col_credits:
     st.markdown("""
         <div style="
             background-color: #f0f2f6; 
-            padding: 15px; 
-            border-radius: 10px; 
+            padding: 12px; 
+            border-radius: 8px; 
             border: 1px solid #dcdcdc;
-            margin-bottom: 20px;
+            text-align: left;
+            margin-top: 10px;
         ">
             <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
-                Developed by:
-            </p>
-            <p style="margin: 0; font-family: sans-serif; font-size: 16px; color: #00857c; font-weight: bold;">
-                Chen Liu
+                Developed by: Chen Liu
             </p>
             <p style="margin: 0; font-family: sans-serif; font-size: 12px; color: #555;">
                 chen.liu1010@gmail.com
             </p>
         </div>
     """, unsafe_allow_html=True)
-    st.sidebar.markdown("---")
-
-# --- 3. MAIN CENTERED HEADER ---
-# Note: I removed the negative margin-bottom so the title is perfectly centered
-st.markdown("""
-    <div style="text-align: center; margin-bottom: 35px;">
-        <h1 style="margin-bottom: 0px; font-size: 3rem; color: #00857c;">Merck Keytruda</h1>
-        <h2 style="margin-top: 0px; font-weight: normal; color: #555;">Provider Targeting Strategy AI Application</h2>
-    </div>
-""", unsafe_allow_html=True)
 
 st.markdown("---")
 
