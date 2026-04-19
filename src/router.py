@@ -1,17 +1,17 @@
 from groq import Groq
-# Import the specific dictionary from our centralized prompts file
 from .prompts import ROUTING_PROMPTS
 
 def get_intent(user_input, api_key):
     """
-    Determines user intent via Llama 3 on Groq using centralized prompts.
+    Determines user intent via Llama 3.3 on Groq.
+    Categorizes into OPPORTUNITY, MARKETING, or NEWS.
     """
     try:
         client = Groq(api_key=api_key)
         
-        # We now pull the intent classifier prompt from ROUTING_PROMPTS
+        # Migrated to llama-3.3-70b-versatile for 2026 compatibility
         response = client.chat.completions.create(
-            model="llama3-70b-8192", 
+            model="llama-3.3-70b-versatile", 
             messages=[
                 {"role": "system", "content": ROUTING_PROMPTS["intent_classifier"]},
                 {"role": "user", "content": user_input}
@@ -20,17 +20,20 @@ def get_intent(user_input, api_key):
             max_tokens=20 
         )
         
+        # Clean the output
         raw_content = response.choices[0].message.content.strip().upper()
         
-        # Validation keywords
+        # Robust check for valid intent keywords
         valid_intents = ["OPPORTUNITY", "MARKETING", "NEWS"]
         
         for valid in valid_intents:
             if valid in raw_content:
                 return valid
         
+        # Default fallback to OPPORTUNITY (Structured RAG)
         return "OPPORTUNITY"
             
     except Exception as e:
-        # Fallback to OPPORTUNITY ensures the app doesn't crash on API lag
+        # Log error to console for debugging
+        print(f"Routing Error: {e}")
         return "OPPORTUNITY"

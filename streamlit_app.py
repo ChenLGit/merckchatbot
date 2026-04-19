@@ -90,12 +90,12 @@ with chat_col:
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
                             
                             res = client.chat.completions.create(
-                                model="llama3-8b-8192",
+                                model="llama-3.3-70b-versatile", # Updated Model ID
                                 messages=[
                                     {"role": "system", "content": persona},
                                     {"role": "user", "content": f"Explain these drivers briefly: {scorecard['drivers']}"}
                                 ],
-                                temperature=0.3
+                                temperature=0.2
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
                         except Exception as e:
