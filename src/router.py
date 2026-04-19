@@ -1,5 +1,10 @@
 from groq import Groq
-from .prompts import ROUTING_PROMPTS
+try:
+    # We import the dictionary here. 
+    # If there's an issue with prompts.py, we catch it immediately.
+    from .prompts import ROUTING_PROMPTS
+except ImportError:
+    ROUTING_PROMPTS = {}
 
 def get_intent(user_input, api_key):
     """
@@ -9,11 +14,17 @@ def get_intent(user_input, api_key):
     try:
         client = Groq(api_key=api_key)
         
-        # Migrated to llama-3.3-70b-versatile for 2026 compatibility
+        # Safe access to the dictionary using .get() 
+        # This prevents the app from crashing if the key is missing.
+        system_instructions = ROUTING_PROMPTS.get(
+            "intent_classifier", 
+            "Classify user input into: OPPORTUNITY, MARKETING, or NEWS. Return only the word."
+        )
+        
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile", 
             messages=[
-                {"role": "system", "content": ROUTING_PROMPTS["intent_classifier"]},
+                {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_input}
             ],
             temperature=0,
@@ -30,10 +41,8 @@ def get_intent(user_input, api_key):
             if valid in raw_content:
                 return valid
         
-        # Default fallback to OPPORTUNITY (Structured RAG)
         return "OPPORTUNITY"
             
     except Exception as e:
-        # Log error to console for debugging
         print(f"Routing Error: {e}")
         return "OPPORTUNITY"
