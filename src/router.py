@@ -1,34 +1,36 @@
-# src/router.py
 from groq import Groq
-from .prompts import SYSTEM_PROMPTS  # Note the dot before prompts
+# Import the specific dictionary from our centralized prompts file
+from .prompts import ROUTING_PROMPTS
 
 def get_intent(user_input, api_key):
     """
-    Determines the user's intent using Groq's fast inference.
-    Passed api_key should come from st.secrets in the main app.
+    Determines user intent via Llama 3 on Groq using centralized prompts.
     """
     try:
         client = Groq(api_key=api_key)
         
+        # We now pull the intent classifier prompt from ROUTING_PROMPTS
         response = client.chat.completions.create(
-            model="llama3-70b-8192",  # Llama 3 is excellent for classification
+            model="llama3-70b-8192", 
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPTS["router"]},
+                {"role": "system", "content": ROUTING_PROMPTS["intent_classifier"]},
                 {"role": "user", "content": user_input}
             ],
             temperature=0,
-            max_tokens=10  # We only need a one-word answer
+            max_tokens=20 
         )
         
-        intent = response.choices[0].message.content.strip().upper()
+        raw_content = response.choices[0].message.content.strip().upper()
         
-        # Validation to ensure the router doesn't return garbage
+        # Validation keywords
         valid_intents = ["OPPORTUNITY", "MARKETING", "NEWS"]
-        if intent not in valid_intents:
-            # Default to Opportunity if the LLM gets creative
-            return "OPPORTUNITY"
+        
+        for valid in valid_intents:
+            if valid in raw_content:
+                return valid
+        
+        return "OPPORTUNITY"
             
-        return intent
     except Exception as e:
-        print(f"Routing Error: {e}")
+        # Fallback to OPPORTUNITY ensures the app doesn't crash on API lag
         return "OPPORTUNITY"
