@@ -2,24 +2,27 @@ import pandas as pd
 import re
 
 def get_hcp_scorecard(query, df):
-    # 1. Robust State Detection
-    # Get unique list of states from your data
+    """
+    Robust Structured RAG: Filters by state mentioned in query and
+    extracts cleaned SHAP drivers for AI interpretation.
+    """
+    # 1. Advanced State Detection
     state_list = df['Rndrng_Prvdr_State_Abrvtn'].unique().tolist()
     target_state = None
     
-    # Check for the state abbreviation as a standalone word (e.g., "in CA" or "CA opportunities")
+    # Searches for state abbreviation as a standalone word (e.g., "in CA")
     for state in state_list:
         if re.search(rf'\b{state}\b', query.upper()):
             target_state = state
             break
             
-    # 2. Filter the Data
+    # 2. Filtering Logic
     if target_state:
         targets = df[(df['pred_class'] == 1) & (df['Rndrng_Prvdr_State_Abrvtn'] == target_state)]
     else:
         targets = df[df['pred_class'] == 1]
     
-    # Sort by payment volume (Opportunity size)
+    # Sort by Opportunity Size (Medicare Payment)
     targets = targets.sort_values(by='OP_MDCR_PYMT_PC', ascending=False)
     
     if targets.empty:
@@ -27,13 +30,20 @@ def get_hcp_scorecard(query, df):
 
     top_hcp = targets.iloc[0]
     
-    # 3. SHAP Drivers
+    # 3. Clean SHAP Drivers for LLM Readability
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     shap_values = top_hcp[shap_cols].to_dict()
+    
+    # Get top 3 drivers by absolute impact
     sorted_drivers = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
     
-    # Clean up names for the AI
-    driver_summary = ", ".join([f"{k.replace('SHAP_', '')}" for k, v in sorted_drivers])
+    # Format drivers: "SHAP_Tot_Clms" -> "Tot Clms"
+    driver_list = []
+    for k, v in sorted_drivers:
+        clean_name = k.replace('SHAP_', '').replace('_', ' ')
+        driver_list.append(f"{clean_name} ({v:+.2f})")
+    
+    driver_summary = ", ".join(driver_list)
     
     return {
         "npi": top_hcp.get('Rndrng_NPI', 'N/A'),

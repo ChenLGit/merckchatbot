@@ -25,15 +25,15 @@ def load_data():
 
 df = load_data()
 
-# --- 2. LAYOUT ---
+# --- 2. UI LAYOUT ---
 main_col, chat_col = st.columns([2.2, 1], gap="medium")
 
 with main_col:
-    # Title Section
+    # Professional Header
     st.markdown("""<div style="font-family: sans-serif; font-size: 3.8rem; font-weight: bold; color: #00857c;">Merck Keytruda</div>""", unsafe_allow_html=True)
     st.markdown("---")
     
-    # KPIs
+    # KPI Row
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Providers", f"{len(df):,}")
     k2.metric("High Propensity", f"{len(df[df['pred_class']==1]):,}")
@@ -42,10 +42,10 @@ with main_col:
 
     st.plotly_chart(plot_executive_map(df), use_container_width=True)
 
-# --- 3. CHAT PANEL ---
+# --- 3. CHAT PANEL (RIGHT SIDE) ---
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
-    groq_api_key = st.secrets["GROQ_API_KEY"]
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -63,14 +63,15 @@ with chat_col:
             st.chat_message("user", avatar="👤").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        intent = get_intent(prompt, groq_api_key)
+        with st.spinner("Routing..."):
+            intent = get_intent(prompt, groq_api_key)
         
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
                     scorecard = get_hcp_scorecard(prompt, df)
                     if scorecard:
-                        # Reorganized Header: NPI First
+                        # UI Update: NPI is the Header
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
                         st.success(f"**State:** {scorecard['state']} | **Type:** {scorecard['type']}")
                         
@@ -78,29 +79,33 @@ with chat_col:
                         **Opportunity Scorecard:**
                         - **Propensity Score:** {scorecard['score']:.1%}
                         - **Medicare Payment Volume:** ${scorecard['payment']:,.0f}
-                        - **Top Model Drivers:** {scorecard['drivers']}
+                        - **Model Drivers:** {scorecard['drivers']}
                         """)
                         
-                        # AI Explainer
+                        # --- ENHANCED AI INSIGHT ---
                         try:
                             client = Groq(api_key=groq_api_key)
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
+                            
+                            analysis_prompt = f"Explain the strategic importance of this HCP target based on these drivers: {scorecard['drivers']}. Keep it to 2 concise sentences."
+                            
                             res = client.chat.completions.create(
                                 model="llama3-8b-8192",
                                 messages=[
                                     {"role": "system", "content": persona},
-                                    {"role": "user", "content": f"Explain why these SHAP drivers matter: {scorecard['drivers']}"}
-                                ]
+                                    {"role": "user", "content": analysis_prompt}
+                                ],
+                                temperature=0.3
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
-                        except:
-                            st.warning("⚠️ Data retrieved, but AI summary failed. Check Groq limits.")
+                        except Exception as e:
+                            st.warning("⚠️ High-level drivers identified, but AI summary was unavailable.")
                     else:
-                        st.error("No matches found for that state.")
+                        st.error("No matches found for that specific state.")
                 
                 elif intent == "NEWS":
-                    st.info("📰 Scanning external competitor news...")
+                    st.info("📰 Scanning external market intelligence for competitor updates...")
                 else:
                     st.write(f"Intent {intent} identified. Processing strategy...")
 
-        st.session_state.messages.append({"role": "assistant", "content": f"Routed to: {intent}"})
+        st.session_state.messages.append({"role": "assistant", "content": f"Routed as: {intent}"})
