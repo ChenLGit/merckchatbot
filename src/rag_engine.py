@@ -2,13 +2,12 @@ import pandas as pd
 import re
 
 def get_hcp_scorecard(query, df):
-    """
-    RAG Engine: Detects state, filters high-propensity targets, 
-    and cleans SHAP drivers for AI interpretation.
-    """
-    # 1. Robust State Detection
+    # 1. Stricter State Detection
     state_list = df['Rndrng_Prvdr_State_Abrvtn'].unique().tolist()
     target_state = None
+    
+    # We look for the state abbreviation as a standalone word (e.g., " NJ " or " NJ,")
+    # This prevents the preposition "in" from triggering "IN" (Indiana)
     for state in state_list:
         if re.search(rf'\b{state}\b', query.upper()):
             target_state = state
@@ -20,6 +19,7 @@ def get_hcp_scorecard(query, df):
     else:
         targets = df[df['pred_class'] == 1]
     
+    # Sort by Opportunity Size
     targets = targets.sort_values(by='OP_MDCR_PYMT_PC', ascending=False)
     
     if targets.empty:
@@ -27,34 +27,24 @@ def get_hcp_scorecard(query, df):
 
     top_hcp = targets.iloc[0]
     
-    # 3. Clean SHAP Drivers (Top 5 only for clarity)
+    # 3. Clean SHAP Drivers (Top 5)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
-    
-    # Ensure values are numeric before sorting (safety catch)
     shap_values = {}
     for col in shap_cols:
         try:
-            val = float(str(top_hcp[col]).replace("'", ""))
-            shap_values[col] = val
+            shap_values[col] = float(str(top_hcp[col]).replace("'", ""))
         except:
             shap_values[col] = 0.0
 
-    # Sort and take top 5
     sorted_drivers = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
-    
-    # Human-readable formatting: SHAP_Tot_Benes -> Total Beneficiaries
-    driver_list = []
-    for k, v in sorted_drivers:
-        clean_name = k.replace('SHAP_', '').replace('_', ' ').title()
-        driver_list.append(f"{clean_name} ({v:+.2f})")
-    
-    driver_summary = ", ".join(driver_list)
+    driver_list = [f"{k.replace('SHAP_', '').replace('_', ' ').title()} ({v:+.2f})" for k, v in sorted_drivers]
     
     return {
         "npi": top_hcp.get('Rndrng_NPI', 'N/A'),
         "state": top_hcp.get('Rndrng_Prvdr_State_Abrvtn', 'N/A'),
+        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), # Added City
         "type": top_hcp.get('Cleaned_Prvdr_Type', 'N/A'),
         "payment": top_hcp.get('OP_MDCR_PYMT_PC', 0),
-        "drivers": driver_summary,
+        "drivers": ", ".join(driver_list),
         "score": top_hcp.get('pred_proba', 0)
     }

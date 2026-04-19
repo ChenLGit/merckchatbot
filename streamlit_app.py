@@ -20,7 +20,6 @@ st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
 @st.cache_data
 def load_data():
-    # Points to the raw CSV data
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
@@ -29,7 +28,7 @@ def load_data():
     df = pd.read_csv(data_path)
     
     # DATA HYGIENE: Force numeric conversion for SHAP columns 
-    # (Fixes the hidden apostrophe issue found in raw CSV)
+    # (Fixes the hidden apostrophe prefix issue)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     for col in shap_cols:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", ""), errors='coerce').fillna(0)
@@ -74,7 +73,7 @@ with main_col:
     k3.metric("Unique Zips", f"{df['Rndrng_Prvdr_Zip5'].nunique():,}")
     k4.metric("Specialties", f"{df['Cleaned_Prvdr_Type'].nunique():,}")
 
-    # FIXED: Updated use_container_width to 2026 standard 'stretch'
+    # Geographic Heatmap
     st.plotly_chart(plot_executive_map(df), width='stretch')
 
 # --- RIGHT COLUMN: AI STRATEGY ASSISTANT ---
@@ -113,29 +112,35 @@ with chat_col:
                     scorecard = get_hcp_scorecard(prompt, df)
                     
                     if scorecard:
-                        # UI Organization: NPI Header as requested
+                        # UI: NPI Header
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
-                        st.success(f"**State:** {scorecard['state']} | **Type:** {scorecard['type']}")
+                        
+                        # UPDATED: Location (City, State)
+                        st.success(f"**Location:** {scorecard['city']}, {scorecard['state']} | **Type:** {scorecard['type']}")
                         
                         st.markdown(f"**Opportunity Scorecard:**")
                         st.write(f"- **Propensity Score:** {scorecard['score']:.1%}")
-                        st.write(f"- **Medicare Pymt Volume:** ${scorecard['payment']:,.0f}")
+                        
+                        # UPDATED: Metric Label
+                        st.write(f"- **Avg Medicare Payment per Person:** ${scorecard['payment']:,.2f}")
+                        
                         st.write(f"- **Top Model Drivers:** {scorecard['drivers']}")
                         
-                        # --- ENHANCED AI INSIGHT (Llama 3.3 Migration) ---
+                        # --- AI INSIGHT (Llama 3.3 Versatile) ---
                         try:
                             client = Groq(api_key=groq_api_key)
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
                             
-                            # Explicit data injection to ensure LLM recognizes drivers
                             analysis_prompt = f"""
                             HCP PROFILE DATA:
                             - NPI: {scorecard['npi']}
+                            - Location: {scorecard['city']}, {scorecard['state']}
                             - Key Model Drivers: {scorecard['drivers']}
 
                             INSTRUCTION:
                             Briefly explain why these drivers make this HCP a high-priority 
-                            target for Keytruda. Translate any technical shorthand into professional terms.
+                            target for Keytruda. Translate technical variables into strategic 
+                            business terms. Limit to 2-3 sentences.
                             """
 
                             res = client.chat.completions.create(
@@ -148,18 +153,16 @@ with chat_col:
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
                         except Exception as e:
-                            # Debug line to catch decommissioning or API errors
-                            st.error(f"Insight Error: {str(e)[:100]}")
+                            st.error(f"Insight Error: {str(e)[:50]}")
                             st.warning("⚠️ High-level drivers identified, but AI summary was unavailable.")
                     else:
                         st.error("No high-propensity matches found for that specific query.")
 
                 elif intent == "MARKETING":
                     st.markdown("### 📈 Marketing Strategy")
-                    st.warning("Analyzing engagement paths and omnichannel messaging frequency...")
+                    st.warning("Analyzing engagement paths and omnichannel strategy...")
 
                 elif intent == "NEWS":
-                    st.markdown("### 📰 Market Intelligence")
-                    st.info("Scanning competitive landscape (BMS, Roche) and clinical trials...")
+                    st.info("📰 Scanning competitive landscape and clinical trial news...")
 
         st.session_state.messages.append({"role": "assistant", "content": f"Handled as: {intent}"})
