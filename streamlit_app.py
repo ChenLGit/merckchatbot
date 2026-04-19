@@ -1,55 +1,54 @@
+# streamlit_app.py
 import streamlit as st
-from openai import OpenAI
+from groq import Groq
+from src.router import get_intent
 
-# Show title and description.
-st.title("💬 Merck Chatbot")
-st.write(
-    "This is a fast, professional chatbot powered by Groq and Llama 3.1."
-)
+# 1. Setup Page Config & Title
+st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
+st.title("🧬 Merck AI Strategy Dashboard")
 
-# 1. NEW SECRETS LOGIC: 
-# This pulls the key from your Streamlit Cloud "Secrets" settings automatically.
-try:
-    groq_api_key = st.secrets["GROQ_API_KEY"]
-except KeyError:
-    st.error("Missing secret: 'GROQ_API_KEY'. Please add it to your Streamlit Cloud settings.")
+# 2. Retrieve Groq API Key from Secrets
+# Note: Ensure you have "GROQ_API_KEY" in your Streamlit Cloud Secrets
+groq_api_key = st.secrets.get("GROQ_API_KEY")
+
+if not groq_api_key:
+    st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
     st.stop()
 
-# 2. Initialize the client using the secret key
-client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=groq_api_key
-)
-
-# Session state for chat history
+# 3. Chat Interface Setup
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display existing messages
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
-if prompt := st.chat_input("How can I help you today?"):
-
-    # Store and display the current prompt.
+# 4. Handle User Input
+if prompt := st.chat_input("Ask about Merck providers, marketing, or competitors..."):
+    # Display user message
+    st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # Execute Routing Logic
+    with st.spinner("Analyzing intent..."):
+        intent = get_intent(prompt, groq_api_key)
 
-    # 3. Generate response using Groq's Llama 3.1 8B model
-    stream = client.chat.completions.create(
-        model="llama-3.1-8b-instant", 
-        messages=[
-            {"role": m["role"], "content": m["content"]}
-            for m in st.session_state.messages
-        ],
-        stream=True,
-    )
-    
+    # Generate Response based on Intent
     with st.chat_message("assistant"):
-        response = st.write_stream(stream)
-    
-    # Save the assistant response to history
-    st.session_state.messages.append({"role": "assistant", "content": response})
+        if intent == "OPPORTUNITY":
+            st.success("🎯 **Intent Detected: Provider Opportunity Analysis**")
+            st.markdown("Routing to the Data Science engine to analyze SHAP values and doctor rankings...")
+            # TODO: Add call to src/visualizations.py
+            
+        elif intent == "MARKETING":
+            st.warning("📈 **Intent Detected: Marketing Strategy**")
+            st.markdown("Routing to the Marketing Strategist engine for channel optimization tips...")
+            # TODO: Add call to src/rag_engine.py
+            
+        elif intent == "NEWS":
+            st.info("📰 **Intent Detected: Market Intelligence**")
+            st.markdown("Searching for the latest news on Merck and Keytruda competitors...")
+            # TODO: Add call to search tools
+            
+    # Add assistant response to history (simple placeholder for now)
+    st.session_state.messages.append({"role": "assistant", "content": f"Routed to {intent}"})
