@@ -1,3 +1,9 @@
+import sys
+import os
+
+# This tells Python to look in the current folder for the 'src' folder
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 # streamlit_app.py
 import streamlit as st
 from groq import Groq
