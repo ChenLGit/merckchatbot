@@ -18,127 +18,108 @@ from src.visualizations import plot_executive_map
 # --- 1. SETUP PAGE CONFIG ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
-# --- 2. HEADER & CREDITS (Side-by-Side) ---
-col_title, col_credits = st.columns([3.5, 1], vertical_alignment="top")
-
-with col_title:
-    # Switched to <div> and custom font-sizes to remove anchor links (hyperlink signs)
-    st.markdown("""
-        <div style="text-align: left;">
-            <div style="
-                font-family: sans-serif; 
-                font-size: 3.8rem; 
-                font-weight: bold; 
-                color: #00857c; 
-                line-height: 1.1;
-                margin-bottom: 8px;
-            ">
-                Merck Keytruda
-            </div>
-            <div style="
-                font-family: sans-serif; 
-                font-size: 1.8rem; 
-                font-weight: normal; 
-                color: #555;
-            ">
-                Provider Targeting Strategy AI Application
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-with col_credits:
-    # Professional Developer box
-    st.markdown("""
-        <div style="
-            background-color: #f0f2f6; 
-            padding: 12px 18px; 
-            border-radius: 8px; 
-            border: 1px solid #dcdcdc;
-            text-align: left;
-            margin-top: 15px;
-        ">
-            <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
-                Developed by: Chen Liu
-            </p>
-            <p style="margin: 0; font-family: sans-serif; font-size: 12px; color: #555;">
-                chen.liu1010@gmail.com
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("---")
-
-# --- 2. DATA LOADING (Path: data/raw/) ---
+# --- 2. DATA LOADING ---
 @st.cache_data
 def load_data():
-    # Points exactly to your new data folder structure
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
-    
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
         st.stop()
-        
-    df = pd.read_csv(data_path)
-    return df
+    return pd.read_csv(data_path)
 
 df = load_data()
 
-# --- 3. BI REPORTING LAYER (KPIs) ---
-st.markdown("### Market Intelligence Overview")
-total_providers = len(df)
-predicted_yes = len(df[df['pred_class'] == 1])
-unique_zips = df['Rndrng_Prvdr_Zip5'].nunique()
-total_types = df['Cleaned_Prvdr_Type'].nunique()
+# --- 3. LAYOUT DEFINITION (BI on Left, AI on Right) ---
+# We use a 2-column layout to keep the map and chat side-by-side
+main_col, chat_col = st.columns([2.2, 1], gap="medium")
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Total Providers", f"{total_providers:,}")
-kpi2.metric("High Propensity (AI Yes)", f"{predicted_yes:,}")
-kpi3.metric("Total Unique Zip5 Areas", f"{unique_zips:,}")
-kpi4.metric("Provider Specialties Covered", f"{total_types:,}")
-
-# --- 4. GEOGRAPHIC HEATMAP ---
-st.plotly_chart(plot_executive_map(df), use_container_width=True)
-
-st.markdown("---")
-
-# --- 5. GROQ & CHAT INTERFACE ---
-groq_api_key = st.secrets.get("GROQ_API_KEY")
-
-if not groq_api_key:
-    st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
-    st.stop()
-
-# Chat interface setup
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Handle User Input
-if prompt := st.chat_input("Ask about Merck providers, marketing, or competitors..."):
+# --- LEFT COLUMN: BI & VISUALIZATIONS ---
+with main_col:
+    # Header & Credits
+    header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")
     
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    with header_left:
+        st.markdown("""
+            <div style="text-align: left;">
+                <div style="font-family: sans-serif; font-size: 3.8rem; font-weight: bold; color: #00857c; line-height: 1.1; margin-bottom: 8px;">
+                    Merck Keytruda
+                </div>
+                <div style="font-family: sans-serif; font-size: 1.8rem; font-weight: normal; color: #555;">
+                    Provider Targeting Strategy AI Application
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with header_right:
+        st.markdown("""
+            <div style="background-color: #f0f2f6; padding: 12px 18px; border-radius: 8px; border: 1px solid #dcdcdc; margin-top: 15px;">
+                <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">Developed by: Chen Liu</p>
+                <p style="margin: 0; font-family: sans-serif; font-size: 12px; color: #555;">chen.liu1010@gmail.com</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # BI Reporting Layer (KPIs)
+    st.markdown("### 📊 Market Intelligence Overview")
+    total_providers = len(df)
+    predicted_yes = len(df[df['pred_class'] == 1])
+    unique_zips = df['Rndrng_Prvdr_Zip5'].nunique()
+    total_types = df['Cleaned_Prvdr_Type'].nunique()
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Providers", f"{total_providers:,}")
+    kpi2.metric("High Propensity (AI Yes)", f"{predicted_yes:,}")
+    kpi3.metric("Unique Zip5s", f"{unique_zips:,}")
+    kpi4.metric("Specialties", f"{total_types:,}")
+
+    # Geographic Heatmap (Now fixed in position)
+    st.plotly_chart(plot_executive_map(df), use_container_width=True)
+
+# --- RIGHT COLUMN: AI CONVERSATIONAL INTERFACE ---
+with chat_col:
+    st.markdown("### 🤖 Strategy Assistant")
     
-    with st.spinner("Analyzing intent..."):
-        intent = get_intent(prompt, groq_api_key)
-#Output 
-    with st.chat_message("assistant"):
-        if intent == "OPPORTUNITY":
-            st.success("🎯 **Intent Detected: Provider Opportunity Analysis**")
-            st.markdown("The AI model identifies these providers based on clinical volume and diagnostic patterns.")
-            st.info("💡 *Tip: Try asking 'Who are the top 5 oncology targets in Texas?'*")
-            
-        elif intent == "MARKETING":
-            st.warning("📈 **Intent Detected: Marketing Strategy**")
-            st.markdown("Routing to the Omnichannel engine for HCP engagement optimization...")
-            
-        elif intent == "NEWS":
-            st.info("📰 **Intent Detected: Market Intelligence**")
-            st.markdown("Scanning latest competitive intelligence for Keytruda biosimilars and IO competitors...")
-            
-    st.session_state.messages.append({"role": "assistant", "content": f"System Routed to: {intent}"})
+    # Check for API Key
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
+    if not groq_api_key:
+        st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
+        st.stop()
+
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Scrollable container for chat history (Fixed height keeps UI stable)
+    # height=650 ensures it aligns roughly with the map height
+    chat_box = st.container(height=650, border=True)
+
+    with chat_box:
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+    # Input area for the Chat
+    if prompt := st.chat_input("Analyze HCP opportunity..."):
+        # Display user message
+        with chat_box:
+            st.chat_message("user").markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        with st.spinner("Routing intent..."):
+            intent = get_intent(prompt, groq_api_key)
+        
+        # Assistant logic
+        with chat_box:
+            with st.chat_message("assistant"):
+                if intent == "OPPORTUNITY":
+                    st.success("🎯 **Intent: Provider Opportunity**")
+                    st.markdown("Filtering high-propensity targets and clinical volume...")
+                    # Future RAG Scorecard logic goes here
+                elif intent == "MARKETING":
+                    st.warning("📈 **Intent: Marketing Strategy**")
+                    st.markdown("Analyzing omnichannel engagement paths...")
+                elif intent == "NEWS":
+                    st.info("📰 **Intent: Market Intelligence**")
+                    st.markdown("Fetching latest IO competitive intelligence...")
+        
+        st.session_state.messages.append({"role": "assistant", "content": f"System Routed to: {intent}"})
