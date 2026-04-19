@@ -19,28 +19,43 @@ from src.visualizations import plot_executive_map
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
 # --- 2. HEADER & CREDITS (Side-by-Side) ---
-# We use a 3:1 ratio to give the title more space
-col_title, col_credits = st.columns([3, 1], vertical_alignment="top")
+col_title, col_credits = st.columns([3.5, 1], vertical_alignment="top")
 
 with col_title:
+    # Switched to <div> and custom font-sizes to remove anchor links (hyperlink signs)
     st.markdown("""
         <div style="text-align: left;">
-            <h1 style="margin-bottom: 0px; font-size: 3rem; color: #00857c;">Merck Keytruda</h1>
-            <h2 style="margin-top: 0px; font-weight: normal; color: #555; font-size: 1.5rem;">
+            <div style="
+                font-family: sans-serif; 
+                font-size: 3.8rem; 
+                font-weight: bold; 
+                color: #00857c; 
+                line-height: 1.1;
+                margin-bottom: 8px;
+            ">
+                Merck Keytruda
+            </div>
+            <div style="
+                font-family: sans-serif; 
+                font-size: 1.8rem; 
+                font-weight: normal; 
+                color: #555;
+            ">
                 Provider Targeting Strategy AI Application
-            </h2>
+            </div>
         </div>
     """, unsafe_allow_html=True)
 
 with col_credits:
+    # Professional Developer box
     st.markdown("""
         <div style="
             background-color: #f0f2f6; 
-            padding: 12px; 
+            padding: 12px 18px; 
             border-radius: 8px; 
             border: 1px solid #dcdcdc;
             text-align: left;
-            margin-top: 10px;
+            margin-top: 15px;
         ">
             <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
                 Developed by: Chen Liu
@@ -51,6 +66,7 @@ with col_credits:
         </div>
     """, unsafe_allow_html=True)
 
+st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("---")
 
 # --- 2. DATA LOADING (Path: data/raw/) ---
