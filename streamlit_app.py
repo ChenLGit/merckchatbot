@@ -91,23 +91,21 @@ with chat_col:
         st.session_state.messages = []
 
     # Scrollable container for chat history (Fixed height keeps UI stable)
-    # height=650 ensures it aligns roughly with the map height on most screens
     chat_box = st.container(height=650, border=True)
 
     with chat_box:
         for message in st.session_state.messages:
-            # FIX: Use "🧬" for AI and " " (space) for User. 
-            # The space character bypasses the default red icon without crashing.
-            avatar = "🧬" if message["role"] == "assistant" else " "
+            # Using standard emojis to ensure 100% stability across all Streamlit versions
+            avatar = "🧬" if message["role"] == "assistant" else "👤"
             
             with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
 
     # Input area for the Chat
     if prompt := st.chat_input("Analyze HCP opportunity..."):
-        # 1. Display user message in the UI (Right-aligned, clean bubble)
+        # 1. Display user message in the UI
         with chat_box:
-            st.chat_message("user", avatar=" ").markdown(prompt)
+            st.chat_message("user", avatar="👤").markdown(prompt)
         
         # Add user message to session state
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -120,7 +118,7 @@ with chat_col:
                 st.error(f"Error calling Router: {e}")
                 intent = "NEWS" # Fallback
 
-        # 3. Display Assistant Response in the UI (Left-aligned, branded icon)
+        # 3. Display Assistant Response in the UI
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
