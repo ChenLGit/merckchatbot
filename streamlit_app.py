@@ -15,13 +15,32 @@ if src_path not in sys.path:
 from src.router import get_intent
 from src.visualizations import plot_executive_map
 
-# --- 1. SETUP PAGE CONFIG & TITLE ---
+# --- 1. SETUP PAGE CONFIG & CREDITS BOX ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
-# Custom two-line centered title
+# Add the Author Credits box in the top-left corner
 st.markdown("""
-    <div style="text-align: center;">
-        <h1 style="margin-bottom: 0px;">Merck Keytruda</h1>
+    <div style="
+        background-color: #f0f2f6; 
+        padding: 10px 15px; 
+        border-radius: 5px; 
+        width: fit-content; 
+        border: 1px solid #dcdcdc;
+        margin-bottom: -50px;
+    ">
+        <p style="margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
+            Developed by: Chen Liu
+        </p>
+        <p style="margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; color: #555;">
+            chen.liu1010@gmail.com
+        </p>
+    </div>
+""", unsafe_allow_html=True)
+
+# Main Centered Header (Your existing code below)
+st.markdown("""
+    <div style="text-align: center; margin-bottom: 25px;">
+        <h1 style="margin-bottom: 0px; font-size: 3rem; color: #00857c;">Merck Keytruda</h1>
         <h2 style="margin-top: 0px; font-weight: normal; color: #555;">Provider Targeting Strategy AI Application</h2>
     </div>
 """, unsafe_allow_html=True)
@@ -44,7 +63,7 @@ def load_data():
 df = load_data()
 
 # --- 3. BI REPORTING LAYER (KPIs) ---
-st.markdown("### 📊 Market Intelligence Overview")
+st.markdown("### Market Intelligence Overview")
 total_providers = len(df)
 predicted_yes = len(df[df['pred_class'] == 1])
 unique_zips = df['Rndrng_Prvdr_Zip5'].nunique()
