@@ -15,31 +15,36 @@ if src_path not in sys.path:
 from src.router import get_intent
 from src.visualizations import plot_executive_map
 
-# --- 1. SETUP PAGE CONFIG & CREDITS BOX ---
+# --- 1. SETUP PAGE CONFIG ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
-# Add the Author Credits box in the top-left corner
-st.markdown("""
-    <div style="
-        background-color: #f0f2f6; 
-        padding: 10px 15px; 
-        border-radius: 5px; 
-        width: fit-content; 
-        border: 1px solid #dcdcdc;
-        margin-bottom: -50px;
-    ">
-        <p style="margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
-            Developed by: Chen Liu
-        </p>
-        <p style="margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; color: #555;">
-            chen.liu1010@gmail.com
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+# --- 2. CREDITS BOX (Now in Sidebar) ---
+with st.sidebar:
+    st.markdown("""
+        <div style="
+            background-color: #f0f2f6; 
+            padding: 15px; 
+            border-radius: 10px; 
+            border: 1px solid #dcdcdc;
+            margin-bottom: 20px;
+        ">
+            <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">
+                Developed by:
+            </p>
+            <p style="margin: 0; font-family: sans-serif; font-size: 16px; color: #00857c; font-weight: bold;">
+                Chen Liu
+            </p>
+            <p style="margin: 0; font-family: sans-serif; font-size: 12px; color: #555;">
+                chen.liu1010@gmail.com
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    st.sidebar.markdown("---")
 
-# Main Centered Header (Your existing code below)
+# --- 3. MAIN CENTERED HEADER ---
+# Note: I removed the negative margin-bottom so the title is perfectly centered
 st.markdown("""
-    <div style="text-align: center; margin-bottom: 25px;">
+    <div style="text-align: center; margin-bottom: 35px;">
         <h1 style="margin-bottom: 0px; font-size: 3rem; color: #00857c;">Merck Keytruda</h1>
         <h2 style="margin-top: 0px; font-weight: normal; color: #555;">Provider Targeting Strategy AI Application</h2>
     </div>
