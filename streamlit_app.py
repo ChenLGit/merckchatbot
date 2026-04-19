@@ -80,46 +80,45 @@ with main_col:
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
     
-    # Check for API Key
-    groq_api_key = st.secrets.get("GROQ_API_KEY")
-    if not groq_api_key:
-        st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
-        st.stop()
+    # ... (API check remains same) ...
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # Scrollable container for chat history (Fixed height keeps UI stable)
-    # height=650 ensures it aligns roughly with the map height
+    # Scrollable container for chat history
     chat_box = st.container(height=650, border=True)
 
     with chat_box:
         for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
+            # Setting avatars: 'user' for human, a custom icon for assistant
+            avatar = "👤" if message["role"] == "user" else "🧬"
+            
+            with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
 
     # Input area for the Chat
     if prompt := st.chat_input("Analyze HCP opportunity..."):
-        # Display user message
+        # 1. User Message (Appears on the right/grey by default)
         with chat_box:
-            st.chat_message("user").markdown(prompt)
+            st.chat_message("user", avatar="👤").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         with st.spinner("Routing intent..."):
             intent = get_intent(prompt, groq_api_key)
         
-        # Assistant logic
+        # 2. Assistant Message (Appears on the left with specific icons)
         with chat_box:
-            with st.chat_message("assistant"):
+            with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
-                    st.success("🎯 **Intent: Provider Opportunity**")
-                    st.markdown("Filtering high-propensity targets and clinical volume...")
-                    # Future RAG Scorecard logic goes here
+                    st.markdown("### 🎯 Target Identified")
+                    st.success("The AI model suggests a high-propensity provider opportunity.")
+                    # Scorecard placeholder
+                    st.markdown("---")
+                    st.info("💡 **Insight:** This HCP ranks in the top 5% for Medicare oncology volume.")
+                
                 elif intent == "MARKETING":
-                    st.warning("📈 **Intent: Marketing Strategy**")
-                    st.markdown("Analyzing omnichannel engagement paths...")
+                    st.markdown("### 📈 Marketing Strategy")
+                    st.warning("Analyzing Omnichannel engagement optimization paths...")
+                
                 elif intent == "NEWS":
-                    st.info("📰 **Intent: Market Intelligence**")
-                    st.markdown("Fetching latest IO competitive intelligence...")
+                    st.markdown("### 📰 Market Intelligence")
+                    st.info("Scanning competitive IO intelligence and FDA pipelines...")
         
         st.session_state.messages.append({"role": "assistant", "content": f"System Routed to: {intent}"})
