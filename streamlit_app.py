@@ -87,29 +87,28 @@ with chat_col:
 
     with chat_box:
         for message in st.session_state.messages:
-            # Setting avatars: 'user' for human, a custom icon for assistant
-            avatar = "👤" if message["role"] == "user" else "🧬"
+            # Set avatar to None for user to remove the icon
+            avatar = "🧬" if message["role"] == "assistant" else None
             
             with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
 
     # Input area for the Chat
     if prompt := st.chat_input("Analyze HCP opportunity..."):
-        # 1. User Message (Appears on the right/grey by default)
+        # 1. User Message (No avatar, clean shaded box)
         with chat_box:
-            st.chat_message("user", avatar="👤").markdown(prompt)
+            st.chat_message("user", avatar=None).markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         with st.spinner("Routing intent..."):
             intent = get_intent(prompt, groq_api_key)
         
-        # 2. Assistant Message (Appears on the left with specific icons)
+        # 2. Assistant Message (Branded 'DNA' icon)
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
                     st.markdown("### 🎯 Target Identified")
                     st.success("The AI model suggests a high-propensity provider opportunity.")
-                    # Scorecard placeholder
                     st.markdown("---")
                     st.info("💡 **Insight:** This HCP ranks in the top 5% for Medicare oncology volume.")
                 
