@@ -22,12 +22,10 @@ st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 def load_data():
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
     df = pd.read_csv(data_path)
-    
-    # Apostrophe removal safety net for numeric columns
+    # Force numeric conversion for SHAP columns
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     for col in shap_cols:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", ""), errors='coerce').fillna(0)
-    
     return df
 
 df = load_data()
@@ -77,7 +75,6 @@ with chat_col:
                 if intent == "OPPORTUNITY":
                     scorecard = get_hcp_scorecard(prompt, df)
                     if scorecard:
-                        # UI Organization: NPI Header
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
                         st.success(f"**State:** {scorecard['state']} | **Type:** {scorecard['type']}")
                         
@@ -86,22 +83,25 @@ with chat_col:
                         st.write(f"- **Medicare Pymt:** ${scorecard['payment']:,.0f}")
                         st.write(f"- **Drivers:** {scorecard['drivers']}")
                         
-                        # --- STABLE AI INSIGHT CALL ---
+                        # --- DEBUGGED AI INSIGHT CALL ---
                         try:
                             client = Groq(api_key=groq_api_key)
+                            # CRITICAL: Ensure this matches your src/prompts.py
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
                             
                             res = client.chat.completions.create(
                                 model="llama3-8b-8192",
                                 messages=[
                                     {"role": "system", "content": persona},
-                                    {"role": "user", "content": f"Explain why these SHAP drivers matter for Keytruda: {scorecard['drivers']}"}
+                                    {"role": "user", "content": f"Explain these drivers briefly: {scorecard['drivers']}"}
                                 ],
                                 temperature=0.3
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
                         except Exception as e:
-                            st.warning("⚠️ High-level drivers identified, but AI summary was unavailable.")
+                            # THIS IS THE DEBUG LINE:
+                            st.error(f"DEBUG: {str(e)}") 
+                            st.warning("⚠️ AI summary unavailable.")
                     else:
                         st.error("No matches found for that specific state.")
                 
