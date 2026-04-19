@@ -17,7 +17,7 @@ from src.visualizations import plot_executive_map
 
 # --- 1. SETUP PAGE CONFIG ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
-st.title("🧬 Merck AI Strategy Dashboard")
+st.title("🧬 Merck Keytruda Provider Targeting Strategy AI Application")
 
 # --- 2. DATA LOADING (Path: data/raw/) ---
 @st.cache_data
@@ -44,8 +44,8 @@ total_types = df['Cleaned_Prvdr_Type'].nunique()
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Total Providers", f"{total_providers:,}")
 kpi2.metric("High Propensity (AI Yes)", f"{predicted_yes:,}")
-kpi3.metric("Unique Zip5 Areas", f"{unique_zips:,}")
-kpi4.metric("Provider Specialties", f"{total_types:,}")
+kpi3.metric("Total Unique Zip5 Areas", f"{unique_zips:,}")
+kpi4.metric("Provider Specialties Covered", f"{total_types:,}")
 
 # --- 4. GEOGRAPHIC HEATMAP ---
 st.plotly_chart(plot_executive_map(df), use_container_width=True)

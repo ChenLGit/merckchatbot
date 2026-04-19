@@ -77,7 +77,8 @@ def plot_executive_map(df):
     )
 
     fig.update_layout(
-        margin={"r":0,"t":40,"l":0,"b":0},
+        title_x=0.5, # This centers the title
+        margin={"r":0,"t":60,"l":0,"b":0}, # Increased top margin slightly for the centered title
         geo=dict(bgcolor='rgba(0,0,0,0)'),
         coloraxis_colorbar=dict(title="Provider Count")
     )
