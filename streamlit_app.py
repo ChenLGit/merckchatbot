@@ -14,8 +14,8 @@ if src_path not in sys.path:
 # Import custom modules
 from src.router import get_intent
 from src.visualizations import plot_executive_map
-from src.rag_engine import get_hcp_scorecard        # Added RAG Engine
-from src.prompts import SYSTEM_PERSONAS           # Added Personas
+from src.rag_engine import get_hcp_scorecard
+from src.prompts import SYSTEM_PERSONAS
 
 # --- 1. SETUP PAGE CONFIG ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
@@ -23,6 +23,7 @@ st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 # --- 2. DATA LOADING ---
 @st.cache_data
 def load_data():
+    # Points to your specific data structure
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
@@ -31,11 +32,12 @@ def load_data():
 
 df = load_data()
 
-# --- 3. LAYOUT DEFINITION ---
+# --- 3. LAYOUT DEFINITION (Fixed Side-by-Side) ---
 main_col, chat_col = st.columns([2.2, 1], gap="medium")
 
-# --- LEFT COLUMN: BI & VISUALIZATIONS ---
+# --- LEFT COLUMN: BI & MAP ---
 with main_col:
+    # Professional Header
     header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")
     
     with header_left:
@@ -60,18 +62,19 @@ with main_col:
 
     st.markdown("---")
 
-    # KPIs
+    # BI KPI Row
     total_providers = len(df)
     predicted_yes = len(df[df['pred_class'] == 1])
     unique_zips = df['Rndrng_Prvdr_Zip5'].nunique()
     total_types = df['Cleaned_Prvdr_Type'].nunique()
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Total Providers", f"{total_providers:,}")
-    kpi2.metric("High Propensity", f"{predicted_yes:,}")
-    kpi3.metric("Unique Zip5s", f"{unique_zips:,}")
-    kpi4.metric("Specialties", f"{total_types:,}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Providers", f"{total_providers:,}")
+    k2.metric("High Propensity", f"{predicted_yes:,}")
+    k3.metric("Unique Zip5s", f"{unique_zips:,}")
+    k4.metric("Specialties", f"{total_types:,}")
 
+    # Map Visualization
     st.plotly_chart(plot_executive_map(df), use_container_width=True)
 
 # --- RIGHT COLUMN: AI CONVERSATIONAL INTERFACE ---
@@ -80,12 +83,13 @@ with chat_col:
     
     groq_api_key = st.secrets.get("GROQ_API_KEY")
     if not groq_api_key:
-        st.error("Missing GROQ_API_KEY.")
+        st.error("Missing GROQ_API_KEY in secrets.")
         st.stop()
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Chat history container with fixed height
     chat_box = st.container(height=650, border=True)
 
     with chat_box:
@@ -94,20 +98,21 @@ with chat_col:
             with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
 
+    # Input Logic
     if prompt := st.chat_input("Analyze HCP opportunity..."):
         with chat_box:
             st.chat_message("user", avatar="👤").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # 1. Get Intent
         with st.spinner("Routing..."):
-            intent = get_intent(prompt, groq_api_key)
+            try:
+                intent = get_intent(prompt, groq_api_key)
+            except:
+                intent = "OPPORTUNITY"
 
-        # 2. Assistant Response Logic
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
-                    # Call the RAG Engine to pull data + SHAP
                     scorecard = get_hcp_scorecard(prompt, df)
                     
                     if scorecard:
@@ -121,28 +126,32 @@ with chat_col:
                         - **Key Model Drivers:** {scorecard['drivers']}
                         """)
                         
-                        # Generate AI Insight explaining the SHAP drivers
-                        client = Groq(api_key=groq_api_key)
-                        explanation = client.chat.completions.create(
-                            model="llama3-8b-8192",
-                            messages=[
-                                {"role": "system", "content": SYSTEM_PERSONAS["data_analyst"]},
-                                {"role": "user", "content": f"Explain why these SHAP drivers make this HCP a high-priority target: {scorecard['drivers']}"}
-                            ]
-                        )
-                        st.info(f"💡 **AI Insight:** {explanation.choices[0].message.content}")
+                        # --- STABLE AI INSIGHT ---
+                        try:
+                            # Clean drivers string for the LLM
+                            clean_drivers = str(scorecard['drivers']).replace("{", "").replace("}", "")
+                            persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
+                            
+                            client = Groq(api_key=groq_api_key)
+                            explanation = client.chat.completions.create(
+                                model="llama3-8b-8192",
+                                messages=[
+                                    {"role": "system", "content": persona},
+                                    {"role": "user", "content": f"Briefly explain why these clinical drivers matter for Keytruda targeting: {clean_drivers}"}
+                                ]
+                            )
+                            st.info(f"💡 **AI Insight:** {explanation.choices[0].message.content}")
+                        except Exception as e:
+                            st.warning("⚠️ High-level drivers identified, but AI summary was unavailable.")
                     else:
-                        st.error("No specific opportunity found for that query.")
+                        st.error("No specific opportunity found.")
 
                 elif intent == "MARKETING":
                     st.markdown("### 📈 Marketing Strategy")
-                    st.warning("Analyzing Omnichannel engagement paths...")
-                    st.markdown("Optimizing touchpoint frequency based on physician response patterns.")
+                    st.warning("Analyzing engagement tactics and omnichannel frequency...")
 
                 elif intent == "NEWS":
                     st.markdown("### 📰 Market Intelligence")
-                    st.info("Scanning competitive landscape (BMS, Opdivo, Roche)...")
-                    st.markdown("Accessing real-time clinical trial updates and FDA filings.")
+                    st.info("Scanning competitive landscape and clinical trial news...")
 
-        # Save assistant message
-        st.session_state.messages.append({"role": "assistant", "content": f"Handled as: {intent}"})
+        st.session_state.messages.append({"role": "assistant", "content": f"Routed as: {intent}"})
