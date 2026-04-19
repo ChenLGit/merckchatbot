@@ -2,24 +2,24 @@ import pandas as pd
 import re
 
 def get_hcp_scorecard(query, df):
-    # 1. Stricter State Detection using Word Boundaries
+    # 1. Stricter State Detection using Word Boundaries (\b)
     state_list = df['Rndrng_Prvdr_State_Abrvtn'].unique().tolist()
     target_state = None
     
-    # query.upper() ensures we match "nj", "NJ", or "New Jersey" if the abrv is present
     for state in state_list:
-        # \b ensures "IN" matches the state, but not the word "insight" or "in"
+        # This regex ensures "IN" matches the state abbreviation, 
+        # but NOT the word "in", "insight", or "industry".
         if re.search(rf'\b{state}\b', query.upper()):
             target_state = state
             break
             
-    # 2. Filtering
+    # 2. Filtering Logic
     if target_state:
         targets = df[(df['pred_class'] == 1) & (df['Rndrng_Prvdr_State_Abrvtn'] == target_state)]
     else:
         targets = df[df['pred_class'] == 1]
     
-    # Sort by Opportunity Size (Average Medicare Payment)
+    # Sort by the requested metric: Average Medicare Payment
     targets = targets.sort_values(by='OP_MDCR_PYMT_PC', ascending=False)
     
     if targets.empty:
@@ -27,7 +27,7 @@ def get_hcp_scorecard(query, df):
 
     top_hcp = targets.iloc[0]
     
-    # 3. Clean SHAP Drivers
+    # 3. Clean SHAP Drivers (Top 5)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     shap_values = {}
     for col in shap_cols:
@@ -42,7 +42,7 @@ def get_hcp_scorecard(query, df):
     return {
         "npi": top_hcp.get('Rndrng_NPI', 'N/A'),
         "state": top_hcp.get('Rndrng_Prvdr_State_Abrvtn', 'N/A'),
-        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), # Added for Location display
+        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), # KEY FIX: Added City
         "type": top_hcp.get('Cleaned_Prvdr_Type', 'N/A'),
         "payment": top_hcp.get('OP_MDCR_PYMT_PC', 0),
         "drivers": ", ".join(driver_list),

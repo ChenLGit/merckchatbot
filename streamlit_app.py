@@ -14,7 +14,7 @@ from src.router import get_intent
 from src.visualizations import plot_executive_map
 from src.rag_engine import get_hcp_scorecard
 
-# SAFETY CHECK: Import personas with a fallback to prevent KeyError crashes
+# SAFETY CHECK: Import personas with a fallback to prevent KeyError crashes during startup
 try:
     from src.prompts import SYSTEM_PERSONAS
 except ImportError:
@@ -25,6 +25,7 @@ st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
 @st.cache_data
 def load_data():
+    # Points to the raw CSV data
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
@@ -32,7 +33,8 @@ def load_data():
         
     df = pd.read_csv(data_path)
     
-    # DATA HYGIENE: Fix hidden apostrophe prefix in SHAP columns
+    # DATA HYGIENE: Force numeric conversion for SHAP columns 
+    # (Fixes the hidden apostrophe prefix issue found in raw CSV)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     for col in shap_cols:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", ""), errors='coerce').fillna(0)
@@ -41,9 +43,10 @@ def load_data():
 
 df = load_data()
 
-# --- 2. UI LAYOUT ---
+# --- 2. UI LAYOUT (BI on Left, AI on Right) ---
 main_col, chat_col = st.columns([2.2, 1], gap="medium")
 
+# --- LEFT COLUMN: BI & VISUALIZATIONS ---
 with main_col:
     header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")
     
@@ -69,16 +72,17 @@ with main_col:
 
     st.markdown("---")
 
+    # BI KPI Layer
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Providers", f"{len(df):,}")
     k2.metric("High Propensity", f"{len(df[df['pred_class'] == 1]):,}")
     k3.metric("Unique Zips", f"{df['Rndrng_Prvdr_Zip5'].nunique():,}")
     k4.metric("Specialties", f"{df['Cleaned_Prvdr_Type'].nunique():,}")
 
-    # Use width='stretch' for 2026 Streamlit compatibility
+    # Geographic Heatmap (2026 stretch standard)
     st.plotly_chart(plot_executive_map(df), width='stretch')
 
-# --- 3. CHAT PANEL ---
+# --- RIGHT COLUMN: AI STRATEGY ASSISTANT ---
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
     
@@ -103,41 +107,46 @@ with chat_col:
             st.chat_message("user", avatar="👤").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
+        # 1. Intent Routing
         with st.spinner("Routing..."):
             intent = get_intent(prompt, groq_api_key)
 
+        # 2. Assistant Logic
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
                     scorecard = get_hcp_scorecard(prompt, df)
                     
                     if scorecard:
+                        # UI: NPI Header
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
                         
-                        # NEW: Display Location as "City, State"
-                        st.success(f"**Location:** {scorecard['city']}, {scorecard['state']} | **Type:** {scorecard['type']}")
+                        # Display Location as City, State (Requires updated rag_engine.py)
+                        st.success(f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | **Type:** {scorecard['type']}")
                         
                         st.markdown(f"**Opportunity Scorecard:**")
                         st.write(f"- **Propensity Score:** {scorecard['score']:.1%}")
                         
-                        # NEW: Specific label for Average Medicare Payment
+                        # Corrected Metric Label per your requirement
                         st.write(f"- **Avg Medicare Payment per Person:** ${scorecard['payment']:,.2f}")
                         
                         st.write(f"- **Top Model Drivers:** {scorecard['drivers']}")
                         
-                        # --- AI INSIGHT ---
+                        # --- AI INSIGHT (Llama 3.3 Versatile) ---
                         try:
                             client = Groq(api_key=groq_api_key)
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
                             
                             analysis_prompt = f"""
-                            HCP PROFILE:
+                            HCP PROFILE DATA:
                             - NPI: {scorecard['npi']}
-                            - Location: {scorecard['city']}, {scorecard['state']}
-                            - Metrics: Avg Payment ${scorecard['payment']:,.2f}
-                            - Drivers: {scorecard['drivers']}
+                            - Location: {scorecard.get('city', 'N/A')}, {scorecard['state']}
+                            - Key Model Drivers: {scorecard['drivers']}
 
-                            Explain why this HCP is a priority. Translate technical shorthand into business terms.
+                            INSTRUCTION:
+                            Briefly explain why these drivers make this HCP a high-priority 
+                            target for Keytruda. Translate technical variables into strategic 
+                            business terms. Limit to 2-3 sentences.
                             """
 
                             res = client.chat.completions.create(
@@ -150,15 +159,16 @@ with chat_col:
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
                         except Exception as e:
+                            st.error(f"Insight Error: {str(e)[:50]}")
                             st.warning("⚠️ AI Insight bypassed.")
                     else:
-                        st.error("No high-propensity matches found.")
+                        st.error("No high-propensity matches found for that specific state.")
 
                 elif intent == "MARKETING":
                     st.markdown("### 📈 Marketing Strategy")
-                    st.warning("Analyzing engagement paths and omnichannel strategy...")
+                    st.warning("Analyzing engagement paths and omnichannel messaging frequency...")
 
                 elif intent == "NEWS":
-                    st.info("📰 Scanning competitive landscape news...")
+                    st.info("📰 Scanning competitive landscape and clinical trial results...")
 
         st.session_state.messages.append({"role": "assistant", "content": f"Handled as: {intent}"})
