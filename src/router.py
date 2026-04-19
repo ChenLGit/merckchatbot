@@ -1,6 +1,6 @@
-# src/router.py
+# In src/router.py
 from groq import Groq
-from src.prompts import SYSTEM_PROMPTS
+from prompts import SYSTEM_PROMPTS # Removed 'src.' or '.'
 
 def get_intent(user_input, api_key):
     """

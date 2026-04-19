@@ -1,13 +1,21 @@
 import sys
 import os
 
-# This tells Python to look in the current folder for the 'src' folder
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 1. Absolute Path Fix: Tell Python to look directly inside 'src'
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, 'src')
 
-# streamlit_app.py
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+# 2. Imports
 import streamlit as st
+import pandas as pd
 from groq import Groq
-from src.router import get_intent
+
+# IMPORTANT: Since 'src' is in the path, we import directly from the filename
+from router import get_intent 
+from prompts import SYSTEM_PROMPTS
 
 # 1. Setup Page Config & Title
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
