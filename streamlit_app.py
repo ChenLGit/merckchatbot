@@ -113,28 +113,31 @@ with chat_col:
                     
                     if scorecard:
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
+                        
+                        # NEW: Display Location as "City, State"
                         st.success(f"**Location:** {scorecard['city']}, {scorecard['state']} | **Type:** {scorecard['type']}")
                         
                         st.markdown(f"**Opportunity Scorecard:**")
                         st.write(f"- **Propensity Score:** {scorecard['score']:.1%}")
+                        
+                        # NEW: Specific label for Average Medicare Payment
                         st.write(f"- **Avg Medicare Payment per Person:** ${scorecard['payment']:,.2f}")
+                        
                         st.write(f"- **Top Model Drivers:** {scorecard['drivers']}")
                         
+                        # --- AI INSIGHT ---
                         try:
                             client = Groq(api_key=groq_api_key)
-                            # Safe get to avoid KeyError
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
                             
                             analysis_prompt = f"""
-                            HCP PROFILE DATA:
+                            HCP PROFILE:
                             - NPI: {scorecard['npi']}
                             - Location: {scorecard['city']}, {scorecard['state']}
-                            - Key Model Drivers: {scorecard['drivers']}
+                            - Metrics: Avg Payment ${scorecard['payment']:,.2f}
+                            - Drivers: {scorecard['drivers']}
 
-                            INSTRUCTION:
-                            Briefly explain why these drivers make this HCP a high-priority 
-                            target for Keytruda. Translate technical variables into strategic 
-                            business terms. Limit to 2-3 sentences.
+                            Explain why this HCP is a priority. Translate technical shorthand into business terms.
                             """
 
                             res = client.chat.completions.create(
@@ -147,7 +150,6 @@ with chat_col:
                             )
                             st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
                         except Exception as e:
-                            st.error(f"Insight Error: {str(e)[:50]}")
                             st.warning("⚠️ AI Insight bypassed.")
                     else:
                         st.error("No high-propensity matches found.")
