@@ -15,13 +15,20 @@ from src.visualizations import plot_executive_map
 from src.rag_engine import get_hcp_scorecard
 from src.prompts import SYSTEM_PERSONAS
 
-# --- 1. SETUP & DATA ---
+# --- 1. SETUP & DATA CLEANING ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
 @st.cache_data
 def load_data():
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
-    return pd.read_csv(data_path)
+    df = pd.read_csv(data_path)
+    
+    # Apostrophe removal safety net for numeric columns
+    shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
+    for col in shap_cols:
+        df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", ""), errors='coerce').fillna(0)
+    
+    return df
 
 df = load_data()
 
@@ -29,7 +36,6 @@ df = load_data()
 main_col, chat_col = st.columns([2.2, 1], gap="medium")
 
 with main_col:
-    # Professional Header
     st.markdown("""<div style="font-family: sans-serif; font-size: 3.8rem; font-weight: bold; color: #00857c;">Merck Keytruda</div>""", unsafe_allow_html=True)
     st.markdown("---")
     
@@ -42,7 +48,7 @@ with main_col:
 
     st.plotly_chart(plot_executive_map(df), use_container_width=True)
 
-# --- 3. CHAT PANEL (RIGHT SIDE) ---
+# --- 3. CHAT PANEL ---
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
     groq_api_key = st.secrets.get("GROQ_API_KEY")
@@ -71,29 +77,25 @@ with chat_col:
                 if intent == "OPPORTUNITY":
                     scorecard = get_hcp_scorecard(prompt, df)
                     if scorecard:
-                        # UI Update: NPI is the Header
+                        # UI Organization: NPI Header
                         st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
                         st.success(f"**State:** {scorecard['state']} | **Type:** {scorecard['type']}")
                         
-                        st.markdown(f"""
-                        **Opportunity Scorecard:**
-                        - **Propensity Score:** {scorecard['score']:.1%}
-                        - **Medicare Payment Volume:** ${scorecard['payment']:,.0f}
-                        - **Model Drivers:** {scorecard['drivers']}
-                        """)
+                        st.markdown(f"**Opportunity Scorecard:**")
+                        st.write(f"- **Propensity:** {scorecard['score']:.1%}")
+                        st.write(f"- **Medicare Pymt:** ${scorecard['payment']:,.0f}")
+                        st.write(f"- **Drivers:** {scorecard['drivers']}")
                         
-                        # --- ENHANCED AI INSIGHT ---
+                        # --- STABLE AI INSIGHT CALL ---
                         try:
                             client = Groq(api_key=groq_api_key)
                             persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
-                            
-                            analysis_prompt = f"Explain the strategic importance of this HCP target based on these drivers: {scorecard['drivers']}. Keep it to 2 concise sentences."
                             
                             res = client.chat.completions.create(
                                 model="llama3-8b-8192",
                                 messages=[
                                     {"role": "system", "content": persona},
-                                    {"role": "user", "content": analysis_prompt}
+                                    {"role": "user", "content": f"Explain why these SHAP drivers matter for Keytruda: {scorecard['drivers']}"}
                                 ],
                                 temperature=0.3
                             )
@@ -108,4 +110,4 @@ with chat_col:
                 else:
                     st.write(f"Intent {intent} identified. Processing strategy...")
 
-        st.session_state.messages.append({"role": "assistant", "content": f"Routed as: {intent}"})
+        st.session_state.messages.append({"role": "assistant", "content": f"Handled as: {intent}"})
