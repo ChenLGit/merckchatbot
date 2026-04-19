@@ -80,44 +80,64 @@ with main_col:
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
     
-    # ... (API check remains same) ...
+    # Check for API Key
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
+    if not groq_api_key:
+        st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
+        st.stop()
 
-    # Scrollable container for chat history
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Scrollable container for chat history (Fixed height keeps UI stable)
+    # height=650 ensures it aligns roughly with the map height on most screens
     chat_box = st.container(height=650, border=True)
 
     with chat_box:
         for message in st.session_state.messages:
-            # Set avatar to None for user to remove the icon
-            avatar = "🧬" if message["role"] == "assistant" else None
+            # Use "🧬" for AI and "" (empty string) for User to hide the default red icon
+            avatar = "🧬" if message["role"] == "assistant" else ""
             
             with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
 
     # Input area for the Chat
     if prompt := st.chat_input("Analyze HCP opportunity..."):
-        # 1. User Message (No avatar, clean shaded box)
+        # 1. Display user message in the UI (Right-aligned, no icon)
         with chat_box:
-            st.chat_message("user", avatar=None).markdown(prompt)
+            st.chat_message("user", avatar="").markdown(prompt)
+        
+        # Add user message to session state
         st.session_state.messages.append({"role": "user", "content": prompt})
         
+        # 2. Process Intent
         with st.spinner("Routing intent..."):
-            intent = get_intent(prompt, groq_api_key)
-        
-        # 2. Assistant Message (Branded 'DNA' icon)
+            try:
+                intent = get_intent(prompt, groq_api_key)
+            except Exception as e:
+                st.error(f"Error calling Router: {e}")
+                intent = "NEWS" # Fallback
+
+        # 3. Display Assistant Response in the UI (Left-aligned, branded icon)
         with chat_box:
             with st.chat_message("assistant", avatar="🧬"):
                 if intent == "OPPORTUNITY":
                     st.markdown("### 🎯 Target Identified")
                     st.success("The AI model suggests a high-propensity provider opportunity.")
                     st.markdown("---")
-                    st.info("💡 **Insight:** This HCP ranks in the top 5% for Medicare oncology volume.")
+                    st.info("💡 **Insight:** This HCP ranks in the top 5% for Medicare oncology volume. I can generate a detailed Opportunity Scorecard for this target.")
+                    # Scorecard logic will be inserted here next
                 
                 elif intent == "MARKETING":
                     st.markdown("### 📈 Marketing Strategy")
                     st.warning("Analyzing Omnichannel engagement optimization paths...")
+                    st.markdown("Determining the best frequency for field rep visits and digital touchpoints based on HCP historical response.")
                 
                 elif intent == "NEWS":
                     st.markdown("### 📰 Market Intelligence")
                     st.info("Scanning competitive IO intelligence and FDA pipelines...")
-        
+                    st.markdown("Retrieving latest clinical trial data for IO combinations and biosimilar entry dates.")
+
+        # Save assistant message to session state
         st.session_state.messages.append({"role": "assistant", "content": f"System Routed to: {intent}"})
