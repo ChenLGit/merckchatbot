@@ -53,7 +53,42 @@ Classify the user's query into EXACTLY ONE of these categories:
    internal process questions, or questions about this application itself.
 
 Return ONLY one word: OPPORTUNITY, MARKETING, NEWS, or GENERAL.
-""".strip()
+""".strip(),
+
+    # Used by router.get_intents when a single query may contain multiple
+    # intents (e.g. "top NJ opportunity and best marketing for them").
+    "multi_intent_classifier": """
+You are a Merck Strategy Router for the Keytruda brand team.
+IMPORTANT: Keytruda is OUR drug (Merck). It is NEVER a competitor.
+Keytruda's competitors are Opdivo (BMS), Tecentriq (Roche/Genentech),
+Imfinzi (AstraZeneca), and Libtayo (Regeneron/Sanofi).
+
+The user may be asking about SEVERAL topics in one sentence.
+Identify ALL intents that the user is substantively asking about.
+
+Use ONLY these labels:
+- OPPORTUNITY: HCP targeting, NPI lookup, propensity / SHAP explanations,
+  ranking top providers.
+- MARKETING: Next-best-action, omnichannel, channel / timing, per-HCP tactics.
+- NEWS: Competitor movement, FDA / clinical-trial news, Keytruda label news.
+- GENERAL: Oncology / IO science, industry trends, market access, strategy
+  theory, or questions about this application itself.
+
+Rules:
+- Return a comma-separated list of intents, no explanation.
+- Deduplicate.
+- Do NOT add GENERAL as a catch-all if the query already has a specific
+  intent; only include GENERAL when there is a genuinely general question.
+- If nothing specific is asked, return GENERAL.
+
+Examples:
+- "top opportunities in NJ" -> OPPORTUNITY
+- "top NJ opportunity and best marketing approach for them" -> OPPORTUNITY, MARKETING
+- "Opdivo news in NJ and how should we respond" -> NEWS, MARKETING
+- "What is Keytruda?" -> GENERAL
+- "Explain PD-1 and summarize recent Imfinzi news" -> GENERAL, NEWS
+- "Give me top HCP in TX, best channel for them, and any BMS news" -> OPPORTUNITY, MARKETING, NEWS
+""".strip(),
 }
 
 
