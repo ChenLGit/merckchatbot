@@ -29,27 +29,38 @@ from .rag_engine import _infer_state_from_query, get_hcp_scorecard
 COMPETITORS = {
     "opdivo": {
         "brand": "Opdivo",
+        "generic": "nivolumab",
         "company": "Bristol-Myers Squibb",
         "column_token": "hcpcs_category_opdivo_br_pct",
         "aliases": ["opdivo", "bms", "bristol", "nivolumab"],
+        # Tokens that, if present in the result's title or body, mark the
+        # article as actually about this drug. Prevents generic-"competitor"
+        # noise (e.g. sports competitors) from leaking into results.
+        "match_tokens": ["opdivo", "nivolumab", "bristol-myers", "bristol myers", "bms"],
     },
     "tecentriq": {
         "brand": "Tecentriq",
+        "generic": "atezolizumab",
         "company": "Roche / Genentech",
         "column_token": "hcpcs_category_tecentriq_br_pct",
         "aliases": ["tecentriq", "roche", "genentech", "atezolizumab"],
+        "match_tokens": ["tecentriq", "atezolizumab", "genentech", "roche"],
     },
     "imfinzi": {
         "brand": "Imfinzi",
+        "generic": "durvalumab",
         "company": "AstraZeneca",
         "column_token": "hcpcs_category_imfinzi_br_pct",
         "aliases": ["imfinzi", "astrazeneca", "durvalumab"],
+        "match_tokens": ["imfinzi", "durvalumab", "astrazeneca", "astra zeneca"],
     },
     "libtayo": {
         "brand": "Libtayo",
+        "generic": "cemiplimab",
         "company": "Regeneron / Sanofi",
         "column_token": "hcpcs_category_libtayo_br_pct",
         "aliases": ["libtayo", "regeneron", "sanofi", "cemiplimab"],
+        "match_tokens": ["libtayo", "cemiplimab", "regeneron", "sanofi"],
     },
 }
 
@@ -154,6 +165,103 @@ def search_news(queries: list[str], max_per_query: int = 3, timelimit: str = "m"
     return results
 
 
+def _build_competitor_queries(competitor_key: str) -> list[str]:
+    """Generate a handful of drug-specific search strings for DuckDuckGo.
+
+    We deliberately avoid generic English words like 'competitor' or
+    'movement', which cause DDG to surface unrelated content (sports
+    competitors, market-movement articles about unrelated tickers, etc.)
+    when the drug itself has few recent hits.
+    """
+    meta = COMPETITORS[competitor_key]
+    brand = meta["brand"]
+    generic = meta.get("generic") or ""
+    company = meta["company"].split("/")[0].strip()  # primary company only
+    queries = [
+        f"{brand} {generic}".strip(),
+        f"{brand} {company} oncology",
+        f"{brand} FDA approval",
+        f"{brand} clinical trial",
+    ]
+    # De-duplicate while preserving order.
+    seen = set()
+    uniq = []
+    for q in queries:
+        key = q.lower().strip()
+        if key and key not in seen:
+            seen.add(key)
+            uniq.append(q)
+    return uniq
+
+
+def _item_matches_competitor(item: dict, match_tokens: list[str]) -> bool:
+    """True if the article title or body contains at least one token that
+    identifies the target drug (brand, generic, or manufacturer)."""
+    if not match_tokens:
+        return True
+    haystack = " ".join([
+        str(item.get("title") or ""),
+        str(item.get("body") or ""),
+    ]).lower()
+    return any(tok.lower() in haystack for tok in match_tokens)
+
+
+def _dedupe_news(items: list[dict]) -> list[dict]:
+    """Drop duplicates by URL, preserving first occurrence."""
+    seen = set()
+    out = []
+    for it in items:
+        key = (it.get("url") or it.get("title") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+    return out
+
+
+def search_competitor_news(
+    competitor_keys: list[str],
+    max_per_competitor: int = 3,
+) -> list[dict] | None:
+    """
+    Run drug-specific DDG searches for each competitor key and aggressively
+    filter the results down to items that actually mention the drug. Falls
+    back from last-month to last-year if the tight window returns nothing.
+    Returns None only if the search library / network is totally unavailable.
+    """
+    if not competitor_keys:
+        return []
+
+    all_kept: list[dict] = []
+    any_library_available = False
+
+    for key in competitor_keys:
+        meta = COMPETITORS[key]
+        queries = _build_competitor_queries(key)
+
+        for timelimit in ("m", "y"):  # try last month first, then last year
+            raw = search_news(queries, max_per_query=max_per_competitor, timelimit=timelimit)
+            if raw is None:
+                # library/network unavailable -> bail out for this competitor
+                break
+            any_library_available = True
+            filtered = [
+                r for r in raw
+                if _item_matches_competitor(r, meta.get("match_tokens") or [])
+            ]
+            if filtered:
+                # Tag which competitor this batch belongs to (useful for debugging).
+                for r in filtered:
+                    r["_competitor"] = key
+                all_kept.extend(filtered)
+                break  # done for this competitor
+
+    if not any_library_available:
+        return None
+
+    return _dedupe_news(all_kept)
+
+
 # -----------------------------------------------------------------------------
 # Orchestrator
 # -----------------------------------------------------------------------------
@@ -171,12 +279,11 @@ def get_competitor_brief(query: str, df: pd.DataFrame, max_news_per_competitor: 
     competitor_keys = detect_competitors(query)
     share = compute_state_share(df, state, competitor_keys)
 
-    geo_tag = state if state else "US"
-    news_queries = []
-    for key in competitor_keys[:3]:
-        meta = COMPETITORS[key]
-        news_queries.append(f"{meta['brand']} Keytruda competitor oncology {geo_tag}")
-    news_items = search_news(news_queries, max_per_query=max_news_per_competitor)
+    # Only search the first 3 detected competitors to keep latency reasonable.
+    news_items = search_competitor_news(
+        competitor_keys[:3],
+        max_per_competitor=max_news_per_competitor,
+    )
 
     top_hcp = get_hcp_scorecard(query, df)
 
