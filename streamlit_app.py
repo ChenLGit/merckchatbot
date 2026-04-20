@@ -32,6 +32,42 @@ except ImportError:
 # ---------------------------------
 # Helpers: Format Outputs
 # ---------------------------------
+import re as _re
+
+# Emoji/markers the marketing persona is supposed to start each bullet with.
+_MARKETING_SECTION_MARKERS = (
+    "🎯",  # Primary Recommendation
+    "🛠️",  # Tactical Channel
+    "🛠",   # Tactical Channel (no variation selector)
+    "⏱️",  # Timing
+    "⏱",   # Timing (no variation selector)
+)
+
+def _normalize_marketing_text(text: str) -> str:
+    """Force each '🎯 ... 🛠️ ... ⏱️ ...' section onto its own markdown bullet,
+    even when the LLM returns them as a single run-on paragraph."""
+    if not text:
+        return text
+    s = str(text).strip()
+
+    # If the model already produced a proper multi-line bulleted list, keep it.
+    # Otherwise insert a newline + bullet prefix before each marker.
+    for marker in _MARKETING_SECTION_MARKERS:
+        # Insert a newline before every marker that isn't already at the start
+        # of a line (i.e., preceded by text/space on the same line).
+        s = _re.sub(rf"(?<!\n)\s*(?={_re.escape(marker)})", "\n", s)
+
+    lines = []
+    for raw_line in s.split("\n"):
+        ln = raw_line.strip()
+        if not ln:
+            continue
+        if ln.startswith(_MARKETING_SECTION_MARKERS) and not ln.startswith(("- ", "* ")):
+            ln = f"- {ln}"
+        lines.append(ln)
+    return "\n".join(lines)
+
+
 def _lookup_label(scorecard):
     """Small tag that tells the user whether this was a specific NPI lookup
     or the top-ranked provider for the inferred filter."""
@@ -130,7 +166,8 @@ def _format_marketing_markdown(scorecard, strategy_text=None):
     ]
     md = "\n\n".join(lines)
     if strategy_text:
-        md += f"\n\n🎯 **Next Best Action:** {strategy_text}"
+        nba = _normalize_marketing_text(strategy_text)
+        md += "\n\n**🎯 Next Best Action**\n\n" + nba
     return md
 
 # ==========================================================================
@@ -311,7 +348,7 @@ with chat_col:
             )
         else:
             anchor_ctx = "(no anchor HCP available for this scope)"
-            
+
         scope_label = brief.get("state") or "US (national)"
         try:
             persona = build_system_prompt("market_strategist")
