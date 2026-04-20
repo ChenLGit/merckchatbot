@@ -44,28 +44,31 @@ _MARKETING_SECTION_MARKERS = (
 )
 
 def _normalize_marketing_text(text: str) -> str:
-    """Force each '🎯 ... 🛠️ ... ⏱️ ...' section onto its own markdown bullet,
-    even when the LLM returns them as a single run-on paragraph."""
+    """Force each '🎯 ... 🛠️ ... ⏱️ ...' section onto its own line with no
+    blank line in between. Uses markdown hard line breaks (two trailing
+    spaces + newline) so Streamlit renders them tight instead of as a
+    'loose' bulleted list with paragraph spacing.
+    """
     if not text:
         return text
     s = str(text).strip()
 
-    # If the model already produced a proper multi-line bulleted list, keep it.
-    # Otherwise insert a newline + bullet prefix before each marker.
+    # Split the text so every marker starts a new line, even if the LLM
+    # ran them together in one paragraph.
     for marker in _MARKETING_SECTION_MARKERS:
-        # Insert a newline before every marker that isn't already at the start
-        # of a line (i.e., preceded by text/space on the same line).
         s = _re.sub(rf"(?<!\n)\s*(?={_re.escape(marker)})", "\n", s)
 
-    lines = []
+    cleaned = []
     for raw_line in s.split("\n"):
         ln = raw_line.strip()
         if not ln:
             continue
-        if ln.startswith(_MARKETING_SECTION_MARKERS) and not ln.startswith(("- ", "* ")):
-            ln = f"- {ln}"
-        lines.append(ln)
-    return "\n".join(lines)
+        # Strip any leading bullet/number markers the LLM may have added.
+        ln = _re.sub(r"^(?:[-*]|\d+[.)])\s+", "", ln)
+        cleaned.append(ln)
+
+    # '  \n' == markdown hard line break -> new line, no blank gap.
+    return "  \n".join(cleaned)
 
 
 def _lookup_label(scorecard):
@@ -167,7 +170,7 @@ def _format_marketing_markdown(scorecard, strategy_text=None):
     md = "\n\n".join(lines)
     if strategy_text:
         nba = _normalize_marketing_text(strategy_text)
-        md += "\n\n**🎯 Next Best Action**\n\n" + nba
+        md += "\n\n**🎯 Next Best Action**  \n" + nba
     return md
 
 # ==========================================================================
