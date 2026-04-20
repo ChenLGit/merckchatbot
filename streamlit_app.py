@@ -20,6 +20,26 @@ try:
 except ImportError:
     SYSTEM_PERSONAS = {}
 
+
+def _format_opportunity_markdown(scorecard, insight_text=None):
+    """Single markdown blob so chat history survives Streamlit reruns."""
+    lines = [
+        f"### 🎯 NPI: {scorecard['npi']}",
+        (
+            f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | "
+            f"**Type:** {scorecard['type']}"
+        ),
+        "**Opportunity Scorecard:**",
+        f"- **Propensity Score:** {scorecard['score']:.1%}",
+        f"- **Avg Medicare Payment per Person:** ${scorecard['payment']:,.2f}",
+        f"- **Top Model Drivers:** {scorecard['drivers']}",
+    ]
+    md = "\n\n".join(lines)
+    if insight_text:
+        md += f"\n\n💡 **AI Insight:** {insight_text}"
+    return md
+
+
 # --- 1. SETUP & DATA CLEANING ---
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
@@ -30,15 +50,15 @@ def load_data():
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
         st.stop()
-        
+
     df = pd.read_csv(data_path)
-    
-    # DATA HYGIENE: Force numeric conversion for SHAP columns 
+
+    # DATA HYGIENE: Force numeric conversion for SHAP columns
     # (Fixes the hidden apostrophe prefix issue found in raw CSV)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
     for col in shap_cols:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", ""), errors='coerce').fillna(0)
-    
+
     return df
 
 df = load_data()
@@ -49,7 +69,7 @@ main_col, chat_col = st.columns([2.2, 1], gap="medium")
 # --- LEFT COLUMN: BI & VISUALIZATIONS ---
 with main_col:
     header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")
-    
+
     with header_left:
         st.markdown("""
             <div style="text-align: left;">
@@ -85,7 +105,7 @@ with main_col:
 # --- RIGHT COLUMN: AI STRATEGY ASSISTANT ---
 with chat_col:
     st.markdown("### 🤖 Strategy Assistant")
-    
+
     groq_api_key = st.secrets.get("GROQ_API_KEY")
     if not groq_api_key:
         st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
@@ -106,69 +126,65 @@ with chat_col:
         with chat_box:
             st.chat_message("user", avatar="👤").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
+
         # 1. Intent Routing
         with st.spinner("Routing..."):
             intent = get_intent(prompt, groq_api_key)
 
-        # 2. Assistant Logic
-        with chat_box:
-            with st.chat_message("assistant", avatar="🧬"):
-                if intent == "OPPORTUNITY":
-                    scorecard = get_hcp_scorecard(prompt, df)
-                    
-                    if scorecard:
-                        # UI: NPI Header
-                        st.markdown(f"### 🎯 NPI: {scorecard['npi']}")
-                        
-                        # Display Location as City, State (Requires updated rag_engine.py)
-                        st.success(f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | **Type:** {scorecard['type']}")
-                        
-                        st.markdown(f"**Opportunity Scorecard:**")
-                        st.write(f"- **Propensity Score:** {scorecard['score']:.1%}")
-                        
-                        # Corrected Metric Label per your requirement
-                        st.write(f"- **Avg Medicare Payment per Person:** ${scorecard['payment']:,.2f}")
-                        
-                        st.write(f"- **Top Model Drivers:** {scorecard['drivers']}")
-                        
-                        # --- AI INSIGHT (Llama 3.3 Versatile) ---
-                        try:
-                            client = Groq(api_key=groq_api_key)
-                            persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
-                            
-                            analysis_prompt = f"""
+        # 2. Assistant logic — persist full reply text so reruns replay the whole thread.
+        assistant_content = ""
+        if intent == "OPPORTUNITY":
+            scorecard = get_hcp_scorecard(prompt, df)
+            if scorecard:
+                insight_text = None
+                try:
+                    client = Groq(api_key=groq_api_key)
+                    persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
+                    analysis_prompt = f"""
                             HCP PROFILE DATA:
                             - NPI: {scorecard['npi']}
                             - Location: {scorecard.get('city', 'N/A')}, {scorecard['state']}
                             - Key Model Drivers: {scorecard['drivers']}
 
                             INSTRUCTION:
-                            Briefly explain why these drivers make this HCP a high-priority 
-                            target for Keytruda. Translate technical variables into strategic 
+                            Briefly explain why these drivers make this HCP a high-priority
+                            target for Keytruda. Translate technical variables into strategic
                             business terms. Limit to 2-3 sentences.
                             """
+                    res = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": persona},
+                            {"role": "user", "content": analysis_prompt},
+                        ],
+                        temperature=0.3,
+                    )
+                    insight_text = res.choices[0].message.content
+                except Exception as e:
+                    insight_text = f"_(Insight unavailable: {str(e)[:80]})_"
+                assistant_content = _format_opportunity_markdown(scorecard, insight_text)
+            else:
+                assistant_content = (
+                    "**OPPORTUNITY**\n\n"
+                    "No high-propensity matches found for that specific state or filter."
+                )
+        elif intent == "MARKETING":
+            assistant_content = (
+                "### 📈 Marketing Strategy\n\n"
+                "Analyzing engagement paths and omnichannel messaging frequency… "
+                "_(Placeholder — connect your marketing workflow here.)_"
+            )
+        elif intent == "NEWS":
+            assistant_content = (
+                "### 📰 News scan\n\n"
+                "Scanning competitive landscape and clinical trial results… "
+                "_(Placeholder — connect your news feed here.)_"
+            )
+        else:
+            assistant_content = f"_(Unhandled intent: {intent})_"
 
-                            res = client.chat.completions.create(
-                                model="llama-3.3-70b-versatile",
-                                messages=[
-                                    {"role": "system", "content": persona},
-                                    {"role": "user", "content": analysis_prompt}
-                                ],
-                                temperature=0.3
-                            )
-                            st.info(f"💡 **AI Insight:** {res.choices[0].message.content}")
-                        except Exception as e:
-                            st.error(f"Insight Error: {str(e)[:50]}")
-                            st.warning("⚠️ AI Insight bypassed.")
-                    else:
-                        st.error("No high-propensity matches found for that specific state.")
+        st.session_state.messages.append({"role": "assistant", "content": assistant_content})
 
-                elif intent == "MARKETING":
-                    st.markdown("### 📈 Marketing Strategy")
-                    st.warning("Analyzing engagement paths and omnichannel messaging frequency...")
-
-                elif intent == "NEWS":
-                    st.info("📰 Scanning competitive landscape and clinical trial results...")
-
-        st.session_state.messages.append({"role": "assistant", "content": f"Handled as: {intent}"})
+        with chat_box:
+            with st.chat_message("assistant", avatar="🧬"):
+                st.markdown(assistant_content)
