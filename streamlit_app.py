@@ -93,25 +93,32 @@ def _format_opportunity_markdown(scorecard, insight_text=None):
         md += f"\n\n💡 **AI Insight:** {insight_text}"
     return md
 
+def _short_date(date_str):
+    """Turn '2026-03-31T00:00:00+00:00' into '2026-03-31'. Keep anything
+    that doesn't match the ISO pattern untouched."""
+    if not date_str:
+        return ""
+    s = str(date_str).strip()
+    m = _re.match(r"(\d{4}-\d{2}-\d{2})", s)
+    return m.group(1) if m else s
+
+
 def _format_news_markdown(brief, recommendation_text=None):
-    """Render the competitor-news view: inferred scope, internal billing mix,
-    live headlines, and an AI-synthesized marketing recommendation."""
+    """Render the competitor-news view. Structure:
+       1. Title
+       2. AI-synthesized "What happened / Competitor impact" commentary
+       3. Recent headlines at the END
+    Internal billing mix and anchor-HCP details are intentionally hidden so
+    pure news questions don't get buried under HCP-targeting noise.
+    """
     state = brief.get("state")
     scope_label = f"State: {state}" if state else "Scope: National"
     lines = [
-        f"### 📰 Competitor Intelligence ({scope_label})",
+        f"### 📰 Competitor Intelligence\n##### {scope_label}",
     ]
 
-    share = brief.get("share") or {}
-    if share:
-        lines.append("**Internal billing-share mix (avg across providers):**")
-        sorted_share = sorted(share.items(), key=lambda kv: (kv[1] if kv[1] == kv[1] else -1), reverse=True)
-        for label, val in sorted_share:
-            try:
-                val_fmt = f"{float(val):.2f}"
-            except (TypeError, ValueError):
-                val_fmt = "n/a"
-            lines.append(f"- **{label}:** {val_fmt}")
+    if recommendation_text:
+        lines.append(recommendation_text.strip())
 
     news = brief.get("news")
     if news is None:
@@ -119,30 +126,21 @@ def _format_news_markdown(brief, recommendation_text=None):
     elif not news:
         lines.append("_No recent articles returned for the inferred competitors._")
     else:
-        lines.append("**Recent headlines:**")
+        lines.append("**📰 Recent headlines:**")
+        headline_bullets = []
         for item in news[:8]:
             title = item.get("title") or "(untitled)"
             source = item.get("source") or ""
-            date = item.get("date") or ""
+            date = _short_date(item.get("date") or "")
             url = item.get("url") or ""
             meta_bits = " · ".join([b for b in [source, date] if b])
             if url:
-                lines.append(f"- [{title}]({url}) — {meta_bits}")
+                headline_bullets.append(f"- [{title}]({url}) — {meta_bits}")
             else:
-                lines.append(f"- {title} — {meta_bits}")
+                headline_bullets.append(f"- {title} — {meta_bits}")
+        lines.append("\n".join(headline_bullets))
 
-    top_hcp = brief.get("top_hcp")
-    if top_hcp:
-        lines.append(
-            f"**Anchor HCP for marketing ({scope_label}):** "
-            f"NPI {top_hcp['npi']} — {top_hcp.get('city', 'N/A')}, {top_hcp['state']} · "
-            f"Propensity {top_hcp['score']:.1%} · Preferred Channel: {top_hcp.get('channel', 'Unknown')}"
-        )
-
-    md = "\n\n".join(lines)
-    if recommendation_text:
-        md += f"\n\n🎯 **Strategic Recommendation:** {recommendation_text}"
-    return md
+    return "\n\n".join(lines)
 
 
 def _format_marketing_markdown(scorecard, strategy_text=None):
@@ -236,7 +234,7 @@ with main_col:
     st.plotly_chart(plot_executive_map(df), width='stretch')
 
 with chat_col:
-    st.markdown("### AI Brand Strategy Assistant")
+    st.markdown("### AI Provider Targeting & Market Strategy")
     groq_api_key = st.secrets.get("GROQ_API_KEY")
     if not groq_api_key:
         st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
@@ -327,30 +325,16 @@ with chat_col:
         with st.spinner("Scanning competitor news and internal billing mix..."):
             brief = _cached_competitor_brief(original_prompt)
 
-        share = brief.get("share") or {}
-        share_ctx = "\n".join([f"- {k}: {v}" for k, v in share.items()]) or "- (no CSV share data)"
-
         news = brief.get("news") or []
         if news:
             news_ctx = "\n".join([
-                f"- ({n.get('date') or 'n/d'}) [{n.get('source') or '?'}] "
+                f"- ({_short_date(n.get('date') or '')} "
+                f"| {n.get('source') or '?'}) "
                 f"{n.get('title') or ''} :: {(n.get('body') or '')[:240]}"
                 for n in news[:8]
             ])
         else:
             news_ctx = "- (no live news available)"
-
-        top_hcp = brief.get("top_hcp")
-        if top_hcp:
-            anchor_ctx = (
-                f"NPI {top_hcp['npi']} in {top_hcp.get('city', 'N/A')}, {top_hcp['state']}; "
-                f"propensity {float(top_hcp['score']):.3f}; "
-                f"preferred channel {top_hcp.get('channel', 'Unknown')}; "
-                f"digital adoption {top_hcp.get('digital_score', 0)}; "
-                f"days since last engagement {top_hcp.get('last_engagement', 0)}."
-            )
-        else:
-            anchor_ctx = "(no anchor HCP available for this scope)"
 
         scope_label = brief.get("state") or "US (national)"
         try:
@@ -361,21 +345,23 @@ with chat_col:
 
                 SCOPE: {scope_label}
 
-                INTERNAL BILLING-SHARE MIX (average across providers in scope):
-                {share_ctx}
-
                 RECENT COMPETITOR HEADLINES (last ~month):
                 {news_ctx}
 
-                ANCHOR HCP FOR MARKETING ACTIONS:
-                {anchor_ctx}
-
                 TASK:
-                In 4-6 short bullet points, summarize the most important
-                competitor movement for this scope and recommend a concrete
-                marketing response for Keytruda. When possible, reference
-                the anchor HCP's preferred channel and engagement recency.
-                Call out uncertainty if the live news is sparse.
+                Respond with EXACTLY two short sections, each 2-3 sentences,
+                and NOTHING ELSE. Do NOT add marketing-action bullets, do
+                NOT reference any specific NPI, provider, city, preferred
+                channel, digital adoption score, or engagement recency.
+                Use this exact format:
+
+                **📰 What happened recently:** <summary grounded in the
+                headlines above; name the competitor(s); if news is sparse
+                for this scope, say so plainly>
+
+                **🔍 Competitor impact on Keytruda:** <concise read on
+                potential impact to Keytruda's position / market share at
+                this scope; stay at the brand-strategy level>
             """
             res = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
