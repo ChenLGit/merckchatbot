@@ -103,6 +103,140 @@ def _short_date(date_str):
     return m.group(1) if m else s
 
 
+# ---------------------------------
+# News article summarization helpers
+# ---------------------------------
+_SUMMARY_TRIGGER_WORDS = (
+    "summarize", "summary", "summarise", "tl;dr", "tldr",
+    "tell me more", "more about", "details on", "details about",
+    "read more", "explain this news", "what does it say", "what does this say",
+    "dig into", "elaborate on", "deep dive", "full story",
+)
+
+
+def _tokenize_for_match(text):
+    """Lowercase + keep only alphanumeric tokens of length >= 2."""
+    if not text:
+        return []
+    return [t for t in _re.findall(r"[a-z0-9]+", str(text).lower()) if len(t) >= 2]
+
+
+def _find_news_item_for_query(query, items):
+    """Best-effort match: does `query` look like it's referring to one of the
+    cached news headlines? Returns the matching news dict or None.
+
+    We match if any of:
+      - >= 4 consecutive tokens from a headline appear in the user query, or
+      - >= 60% of the headline's content tokens appear in the query.
+    """
+    if not items or not query:
+        return None
+
+    q_tokens = _tokenize_for_match(query)
+    if not q_tokens:
+        return None
+    q_joined = " ".join(q_tokens)
+
+    best = None
+    best_score = 0.0
+    _STOP = {
+        "the", "and", "for", "with", "from", "that", "this",
+        "will", "has", "have", "a", "an", "of", "to", "in", "on",
+        "at", "by", "as", "is", "are", "was", "were", "be", "it",
+        "its", "or", "but", "not", "vs", "more", "less",
+    }
+    for item in items:
+        title_tokens = [t for t in _tokenize_for_match(item.get("title")) if t not in _STOP]
+        if not title_tokens:
+            continue
+
+        # Test 1: contiguous 4-gram overlap in the original query.
+        contiguous_hit = False
+        for i in range(len(title_tokens) - 3):
+            gram = " ".join(title_tokens[i:i + 4])
+            if gram in q_joined:
+                contiguous_hit = True
+                break
+
+        # Test 2: content-word overlap ratio.
+        overlap = len(set(title_tokens) & set(q_tokens))
+        ratio = overlap / max(len(title_tokens), 1)
+
+        score = ratio + (0.5 if contiguous_hit else 0.0)
+        if score > best_score and (contiguous_hit or ratio >= 0.6):
+            best_score = score
+            best = item
+    return best
+
+
+def _looks_like_summary_request(query):
+    """True if the query contains an explicit 'summarize/tell me more' cue."""
+    q = (query or "").lower()
+    return any(trigger in q for trigger in _SUMMARY_TRIGGER_WORDS)
+
+
+def _fetch_article_text(url, max_chars=6000):
+    """Best-effort fetch of an article and a rough plain-text extract. Returns
+    '' on any failure (network blocked, paywall, non-HTML, missing lib)."""
+    if not url:
+        return ""
+    try:
+        import requests  # transitive via streamlit/groq
+    except ImportError:
+        return ""
+    try:
+        resp = requests.get(
+            url,
+            timeout=8,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; MerckKeytrudaBot/1.0; "
+                    "+https://merck.com)"
+                )
+            },
+        )
+        if resp.status_code >= 400 or not resp.text:
+            return ""
+        html = resp.text
+    except Exception:
+        return ""
+
+    # Drop scripts and styles first, then strip all remaining HTML tags.
+    html = _re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
+    html = _re.sub(r"(?is)<style.*?>.*?</style>", " ", html)
+    html = _re.sub(r"(?is)<!--.*?-->", " ", html)
+    text = _re.sub(r"(?s)<[^>]+>", " ", html)
+    # Collapse whitespace and decode a few common entities.
+    text = (
+        text.replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&quot;", '"')
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+    )
+    text = _re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
+
+
+def _format_news_summary_markdown(item, summary_text):
+    title = item.get("title") or "(untitled)"
+    source = item.get("source") or ""
+    date = _short_date(item.get("date") or "")
+    url = item.get("url") or ""
+    meta = " · ".join([b for b in [source, date] if b])
+    header_title = f"[{title}]({url})" if url else title
+    lines = [
+        "### 📰 Article Summary",
+        f"##### {header_title}",
+    ]
+    if meta:
+        lines.append(f"_{meta}_")
+    if summary_text:
+        lines.append(summary_text.strip())
+    return "\n\n".join(lines)
+
+
 def _format_news_markdown(brief, recommendation_text=None):
     """Render the competitor-news view. Structure:
        1. Title
@@ -139,6 +273,10 @@ def _format_news_markdown(brief, recommendation_text=None):
             else:
                 headline_bullets.append(f"- {title} — {meta_bits}")
         lines.append("\n".join(headline_bullets))
+        lines.append(
+            "_Want a deeper read? Paste a headline (or type "
+            "`summarize <headline>`) and I'll summarize the article for you._"
+        )
 
     return "\n\n".join(lines)
 
@@ -326,6 +464,9 @@ with chat_col:
             brief = _cached_competitor_brief(original_prompt)
 
         news = brief.get("news") or []
+        # Cache the just-displayed headlines so the user can paste one back
+        # and get a quick summary on the next turn.
+        st.session_state.last_news_items = news
         if news:
             news_ctx = "\n".join([
                 f"- ({_short_date(n.get('date') or '')} "
@@ -416,6 +557,57 @@ with chat_col:
         "NEWS": _answer_news,
     }
 
+    def _answer_news_summary(item, client: Groq) -> str:
+        """Pull the article body for a cached headline and ask the LLM for a
+        short Keytruda-relevant summary. Falls back to the DuckDuckGo snippet
+        if the page can't be fetched."""
+        with st.spinner("Reading the article..."):
+            article_text = _fetch_article_text(item.get("url") or "")
+        # Fallback to the snippet DDG already gave us if the fetch fails.
+        if not article_text:
+            article_text = item.get("body") or ""
+
+        if not article_text:
+            return _format_news_summary_markdown(
+                item,
+                "_(Article content is unavailable — the publisher likely blocks "
+                "automated access. Try opening the link directly.)_",
+            )
+
+        try:
+            persona = build_system_prompt("market_strategist")
+            summary_prompt = f"""
+                ARTICLE TITLE: {item.get('title') or '(untitled)'}
+                ARTICLE SOURCE: {item.get('source') or 'unknown'}
+                ARTICLE DATE: {_short_date(item.get('date') or '')}
+
+                ARTICLE CONTENT (may be truncated):
+                {article_text}
+
+                TASK:
+                Summarize the article for a Merck Keytruda brand strategist.
+                Output EXACTLY these three short sections, each 1-2 sentences,
+                and NOTHING ELSE. Do not reference any NPI, provider, city,
+                preferred channel, or engagement recency.
+
+                **📝 What the article says:** <core facts from the content above>
+                **🔍 Why it matters for Keytruda:** <potential impact on our
+                position, pipeline, or competitive landscape>
+                **🧭 What to watch next:** <the one thing a brand team should
+                track as a follow-up>
+            """
+            res = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": persona},
+                          {"role": "user", "content": summary_prompt}],
+                temperature=0.2,
+            )
+            summary_text = res.choices[0].message.content
+        except Exception as e:
+            summary_text = f"_(Summary unavailable: {str(e)[:80]})_"
+
+        return _format_news_summary_markdown(item, summary_text)
+
     def _answer_for_intent(intent: str, original_prompt: str, client: Groq) -> str:
         handler = INTENT_HANDLERS.get(intent)
         if handler is None:
@@ -490,12 +682,45 @@ with chat_col:
         ("intent_queue", []),
         ("original_prompt", ""),
         ("pending_followup", False),
+        ("last_news_items", []),
     ):
         if key not in st.session_state:
             st.session_state[key] = default
 
+    def _maybe_answer_news_summary(user_prompt: str, client: Groq):
+        """Return an assistant markdown string if the user is asking to
+        summarize one of the recently-shown headlines, else None.
+
+        Triggers in two ways:
+          1. User message clearly matches a cached headline (paste/partial).
+          2. User message contains an explicit 'summarize/tell me more' cue
+             AND cached headlines exist; in that case we match either the
+             explicit reference or fall back to the first cached headline.
+        """
+        items = st.session_state.get("last_news_items") or []
+        if not items:
+            return None
+
+        matched = _find_news_item_for_query(user_prompt, items)
+        if matched is None and _looks_like_summary_request(user_prompt):
+            # Explicit cue, no obvious title match → use the first cached headline.
+            matched = items[0]
+        if matched is None:
+            return None
+        return _answer_news_summary(matched, client)
+
     def _start_fresh(user_prompt: str, client: Groq) -> str:
         """Detect intents, answer the first, queue the rest, return assistant markdown."""
+        # Short-circuit: if the user is clearly asking us to summarize a
+        # previously-shown headline, do that instead of re-running routing.
+        summary_answer = _maybe_answer_news_summary(user_prompt, client)
+        if summary_answer is not None:
+            # Clear any pending queue — they've pivoted to article summarization.
+            st.session_state.intent_queue = []
+            st.session_state.original_prompt = ""
+            st.session_state.pending_followup = False
+            return summary_answer
+
         with st.spinner("Routing..."):
             intents = get_intents(user_prompt, groq_api_key)
         first, remaining = intents[0], intents[1:]

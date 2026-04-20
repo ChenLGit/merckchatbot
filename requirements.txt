@@ -4,3 +4,4 @@ pandas
 openai
 plotly
 ddgs
+requests
