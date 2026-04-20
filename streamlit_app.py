@@ -311,7 +311,7 @@ with chat_col:
             )
         else:
             anchor_ctx = "(no anchor HCP available for this scope)"
-
+            
         scope_label = brief.get("state") or "US (national)"
         try:
             persona = build_system_prompt("market_strategist")
@@ -409,28 +409,51 @@ with chat_col:
         )
 
     _YES_WORDS = {
-        "y", "yes", "yeah", "yep", "ya", "yup",
-        "sure", "ok", "okay", "please", "yes please",
-        "go ahead", "continue", "next", "do it", "go", "sounds good",
+        "y", "ye", "yes", "yea", "yeah", "yep", "yup", "ya", "yah", "ys",
+        "sure", "ok", "okay", "k", "kk",
+        "please", "pls", "plz", "yes please", "please do",
+        "go", "go ahead", "continue", "next", "proceed",
+        "do it", "sounds good", "affirmative", "affirm",
     }
     _NO_WORDS = {
-        "n", "no", "nope", "nah", "skip", "stop", "not now", "later",
-        "no thanks", "no thank you",
+        "n", "no", "nope", "nah", "naw", "skip", "stop",
+        "not now", "later", "no thanks", "no thank you",
+        "negative", "cancel",
     }
+    _YES_PREFIX_CANDIDATES = [w for w in _YES_WORDS if len(w) >= 2 and " " not in w]
+    _NO_PREFIX_CANDIDATES = [w for w in _NO_WORDS if len(w) >= 2 and " " not in w]
 
     def _classify_followup_reply(text: str) -> str:
-        """YES / NO / NEW. NEW means treat as a fresh query."""
-        t = (text or "").strip().lower().rstrip(" .!?")
+        """Return YES / NO / NEW / UNCLEAR.
+
+        UNCLEAR means the reply was too short/ambiguous to tell — the caller
+        should NOT drop the pending queue; instead re-ask the user.
+        """
+        raw = (text or "").strip()
+        t = raw.lower().rstrip(" .!?,;:")
+        if not t:
+            return "UNCLEAR"
+
         if t in _YES_WORDS:
             return "YES"
         if t in _NO_WORDS:
             return "NO"
-        # Allow short prefixes like "yes, please continue" or "sure, go on".
-        # Strip punctuation from the first token so "sure," still matches.
+
+        # Short-prefix tolerance so "ye" / "ok" / "nop" / "sur" still work.
+        if len(t) <= 4:
+            if any(w.startswith(t) for w in _YES_PREFIX_CANDIDATES):
+                return "YES"
+            if any(w.startswith(t) for w in _NO_PREFIX_CANDIDATES):
+                return "NO"
+            # Very short and not a recognizable affirmation → ambiguous,
+            # don't treat as a fresh query (avoids wiping the queue on typos).
+            return "UNCLEAR"
+
+        # Longer text: accept "yes, please continue" or "no, ask about TX".
         first_token = t.split()[0].strip(",.!?:;") if t else ""
-        if first_token in _YES_WORDS and len(t) <= 40:
+        if first_token in _YES_WORDS and len(t) <= 60:
             return "YES"
-        if first_token in _NO_WORDS and len(t) <= 40:
+        if first_token in _NO_WORDS and len(t) <= 60:
             return "NO"
         return "NEW"
 
@@ -498,6 +521,32 @@ with chat_col:
                     "Understood — I'll drop that follow-up. "
                     "What would you like to look at next?"
                 )
+            elif reply_kind == "UNCLEAR":
+                # Keep the queue + original_prompt intact so a typo like "Ye"
+                # doesn't wipe context. Re-prompt the user for a clear answer.
+                next_intent = (
+                    st.session_state.intent_queue[0]
+                    if st.session_state.intent_queue
+                    else None
+                )
+                if next_intent:
+                    label_next = INTENT_LABEL.get(next_intent, next_intent.lower())
+                    assistant_content = (
+                        f"I didn't quite catch that. Did you mean **yes** to continue "
+                        f"with **{label_next}** for your original question"
+                        + (
+                            f" _(\"{st.session_state.original_prompt}\")_"
+                            if st.session_state.original_prompt
+                            else ""
+                        )
+                        + ", or **no** to skip? You can also just type a new question."
+                    )
+                else:
+                    st.session_state.pending_followup = False
+                    assistant_content = (
+                        "I didn't quite catch that — could you rephrase what you'd "
+                        "like me to look into?"
+                    )
             else:
                 # A new question -- drop any pending queue and start fresh.
                 st.session_state.intent_queue = []
