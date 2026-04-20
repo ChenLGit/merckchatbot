@@ -159,7 +159,7 @@ def _format_marketing_markdown(scorecard, strategy_text=None):
         last_engagement = 0
 
     lines = [
-        f"### 📈 Marketing Strategy: NPI {scorecard['npi']}",
+        f"### 📈 Marketing Strategy\n##### NPI {scorecard['npi']}",
         _lookup_label(scorecard),
         f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | **Propensity:** {scorecard['score']:.1%}",
         "**Engagement Metrics:**",
