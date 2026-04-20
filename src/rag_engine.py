@@ -59,23 +59,56 @@ def _infer_state_from_query(query, df):
             best_pos, best_abbr = m.start(), abbr
     return best_abbr
 
-def get_hcp_scorecard(query, df):
-    target_state = _infer_state_from_query(query, df)
-            
-    # 2. Filtering Logic
-    if target_state:
-        state_col = df["Rndrng_Prvdr_State_Abrvtn"].astype(str).str.strip().str.upper()
-        targets = df[(df["pred_class"] == 1) & (state_col == target_state)]
-    else:
-        targets = df[df['pred_class'] == 1]
-    
-    # Sort by the requested metric: Average Medicare Payment
-    targets = targets.sort_values(by='OP_MDCR_PYMT_PC', ascending=False)
-    
-    if targets.empty:
+def _extract_npi(query):
+    """Return the first standalone 10-digit NPI in the query, else None."""
+    if not query:
         return None
+    m = re.search(r"(?<!\d)(\d{10})(?!\d)", str(query))
+    return m.group(1) if m else None
 
-    top_hcp = targets.iloc[0]
+
+def _lookup_by_npi(df, npi):
+    """Return the row for a specific NPI (as a Series) or None if not found."""
+    npi_str = str(npi).strip()
+    npi_series = df["Rndrng_NPI"].astype(str).str.strip()
+    match = df[npi_series == npi_str]
+    if match.empty:
+        # Fallback: compare numerically to cover zero-padded or formatted values.
+        try:
+            match = df[pd.to_numeric(df["Rndrng_NPI"], errors="coerce") == int(npi_str)]
+        except ValueError:
+            match = df.iloc[0:0]
+    if match.empty:
+        return None
+    return match.iloc[0]
+
+
+def get_hcp_scorecard(query, df):
+    # 1. Explicit NPI lookup overrides any other filter so the user always
+    #    gets exactly the provider they asked about, regardless of intent.
+    matched_by_npi = False
+    npi_requested = _extract_npi(query)
+    if npi_requested:
+        row = _lookup_by_npi(df, npi_requested)
+        if row is None:
+            return None
+        top_hcp = row
+        matched_by_npi = True
+    else:
+        # 2. Otherwise filter by (optional) state and pick the top propensity.
+        target_state = _infer_state_from_query(query, df)
+        if target_state:
+            state_col = df["Rndrng_Prvdr_State_Abrvtn"].astype(str).str.strip().str.upper()
+            targets = df[(df["pred_class"] == 1) & (state_col == target_state)]
+        else:
+            targets = df[df["pred_class"] == 1]
+
+        # Rank "top" by model propensity so OPPORTUNITY and MARKETING agree
+        # on what the #1 provider is for a given filter.
+        targets = targets.sort_values(by="pred_proba", ascending=False)
+        if targets.empty:
+            return None
+        top_hcp = targets.iloc[0]
     
     # 3. Clean SHAP Drivers (Top 5)
     shap_cols = [c for c in df.columns if c.startswith('SHAP_')]
@@ -93,13 +126,16 @@ def get_hcp_scorecard(query, df):
     return {
         "npi": top_hcp.get('Rndrng_NPI', 'N/A'),
         "state": top_hcp.get('Rndrng_Prvdr_State_Abrvtn', 'N/A'),
-        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), 
+        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'),
         "type": top_hcp.get('Cleaned_Prvdr_Type', 'N/A'),
         "payment": top_hcp.get('OP_MDCR_PYMT_PC', 0),
         "drivers": ", ".join(driver_list),
         "score": top_hcp.get('pred_proba', 0),
-        # --- SYNTHETIC MARKETING FIELDS ---
+        # --- MARKETING FIELDS ---
         "digital_score": top_hcp.get('Digital_Adoption_Score', 0),
         "last_engagement": top_hcp.get('Last_Engagement_Days', 0),
-        "channel": top_hcp.get('Preferred_Channel', 'Unknown')
+        "channel": top_hcp.get('Preferred_Channel', 'Unknown'),
+        # --- Lookup metadata ---
+        "matched_by_npi": matched_by_npi,
+        "requested_npi": npi_requested,
     }

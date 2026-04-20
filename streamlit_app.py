@@ -18,7 +18,7 @@ if src_path not in sys.path:
 
 from src.router import get_intent
 from src.visualizations import plot_executive_map
-from src.rag_engine import get_hcp_scorecard
+from src.rag_engine import get_hcp_scorecard, _extract_npi
 
 try:
     from src.prompts import SYSTEM_PERSONAS
@@ -28,9 +28,17 @@ except ImportError:
 # ---------------------------------
 # Helpers: Format Outputs
 # ---------------------------------
+def _lookup_label(scorecard):
+    """Small tag that tells the user whether this was a specific NPI lookup
+    or the top-ranked provider for the inferred filter."""
+    if scorecard.get("matched_by_npi"):
+        return f"_Lookup: requested NPI {scorecard.get('requested_npi')}_"
+    return "_Lookup: top propensity for inferred filter_"
+
 def _format_opportunity_markdown(scorecard, insight_text=None):
     lines = [
         f"### 🎯 NPI: {scorecard['npi']}",
+        _lookup_label(scorecard),
         f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | **Type:** {scorecard['type']}",
         "**Opportunity Scorecard:**",
         f"- **Propensity Score:** {scorecard['score']:.1%}",
@@ -43,13 +51,25 @@ def _format_opportunity_markdown(scorecard, insight_text=None):
     return md
 
 def _format_marketing_markdown(scorecard, strategy_text=None):
-    """Renders the marketing strategy view using synthetic engagement data."""
+    """Renders the marketing strategy view for the same provider the
+    opportunity view would surface (or the exact NPI the user asked for)."""
+    try:
+        digital_score = float(scorecard.get("digital_score", 0) or 0)
+    except (TypeError, ValueError):
+        digital_score = 0.0
+    last_engagement = scorecard.get("last_engagement", 0)
+    try:
+        last_engagement = int(float(last_engagement))
+    except (TypeError, ValueError):
+        last_engagement = 0
+
     lines = [
         f"### 📈 Marketing Strategy: NPI {scorecard['npi']}",
-        f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']}",
+        _lookup_label(scorecard),
+        f"**Location:** {scorecard.get('city', 'N/A')}, {scorecard['state']} | **Propensity:** {scorecard['score']:.1%}",
         "**Engagement Metrics:**",
-        f"- **Digital Adoption Score:** {scorecard.get('digital_score', 0):.2f}",
-        f"- **Last Engagement:** {scorecard.get('last_engagement', 0)} days ago",
+        f"- **Digital Adoption Score:** {digital_score:.2f}",
+        f"- **Last Engagement:** {last_engagement} days ago",
         f"- **Preferred Channel:** {scorecard.get('channel', 'Unknown')}",
     ]
     md = "\n\n".join(lines)
@@ -140,6 +160,8 @@ with chat_col:
         assistant_content = ""
         client = Groq(api_key=groq_api_key)
 
+        requested_npi = _extract_npi(prompt)
+
         if intent == "OPPORTUNITY":
             scorecard = get_hcp_scorecard(prompt, df)
             if scorecard:
@@ -165,7 +187,10 @@ with chat_col:
                 except Exception as e:
                     assistant_content = _format_opportunity_markdown(scorecard, f"_(Insight unavailable: {str(e)[:80]})_")
             else:
-                assistant_content = "No high-propensity matches found for that filter."
+                if requested_npi:
+                    assistant_content = f"NPI `{requested_npi}` was not found in the dataset."
+                else:
+                    assistant_content = "No high-propensity matches found for that filter."
 
         elif intent == "MARKETING":
             # Re-use the RAG engine to find the same top target, then apply marketing logic
@@ -193,7 +218,10 @@ with chat_col:
                 except Exception as e:
                     assistant_content = _format_marketing_markdown(scorecard, f"_(Strategy unavailable: {str(e)[:80]})_")
             else:
-                assistant_content = "Could not find a high-propensity target for strategy analysis."
+                if requested_npi:
+                    assistant_content = f"NPI `{requested_npi}` was not found in the dataset."
+                else:
+                    assistant_content = "Could not find a high-propensity target for strategy analysis."
 
         elif intent == "NEWS":
             assistant_content = "### 📰 News scan\n\nScanning competitive landscape and clinical trial results..."
