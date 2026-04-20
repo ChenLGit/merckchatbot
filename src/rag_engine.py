@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 
-# Full names -> USPS abbreviations present in the dataset (extend as needed).
+# Full names -> USPS abbreviations present in the dataset
 _STATE_NAME_TO_ABBR = {
     "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA",
     "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "DISTRICT OF COLUMBIA": "DC",
@@ -16,7 +16,6 @@ _STATE_NAME_TO_ABBR = {
     "WASHINGTON": "WA", "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY",
 }
 
-
 def _valid_state_abbrs(df):
     out = set()
     for s in df["Rndrng_Prvdr_State_Abrvtn"].dropna().unique():
@@ -24,7 +23,6 @@ def _valid_state_abbrs(df):
         if len(s) == 2:
             out.add(s)
     return out
-
 
 def _normalize_query_for_state_match(query, valid_abbrs):
     """
@@ -40,7 +38,6 @@ def _normalize_query_for_state_match(query, valid_abbrs):
 
     upper = re.sub(r"\bIN\s+([A-Z]{2})\b", mask_in_before_state, upper)
     return upper
-
 
 def _infer_state_from_query(query, df):
     """Return a single USPS abbr or None, using leftmost mention in the query."""
@@ -61,7 +58,6 @@ def _infer_state_from_query(query, df):
         if m and m.start() < best_pos:
             best_pos, best_abbr = m.start(), abbr
     return best_abbr
-
 
 def get_hcp_scorecard(query, df):
     target_state = _infer_state_from_query(query, df)
@@ -93,12 +89,17 @@ def get_hcp_scorecard(query, df):
     sorted_drivers = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
     driver_list = [f"{k.replace('SHAP_', '').replace('_', ' ').title()} ({v:+.2f})" for k, v in sorted_drivers]
     
+    # 4. Final Scorecard Dictionary
     return {
         "npi": top_hcp.get('Rndrng_NPI', 'N/A'),
         "state": top_hcp.get('Rndrng_Prvdr_State_Abrvtn', 'N/A'),
-        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), # KEY FIX: Added City
+        "city": top_hcp.get('Rndrng_Prvdr_City', 'N/A'), 
         "type": top_hcp.get('Cleaned_Prvdr_Type', 'N/A'),
         "payment": top_hcp.get('OP_MDCR_PYMT_PC', 0),
         "drivers": ", ".join(driver_list),
-        "score": top_hcp.get('pred_proba', 0)
+        "score": top_hcp.get('pred_proba', 0),
+        # --- SYNTHETIC MARKETING FIELDS ---
+        "digital_score": top_hcp.get('Digital_Adoption_Score', 0),
+        "last_engagement": top_hcp.get('Last_Engagement_Days', 0),
+        "channel": top_hcp.get('Preferred_Channel', 'Unknown')
     }
