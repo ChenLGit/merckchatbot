@@ -24,40 +24,43 @@ def _valid_state_abbrs(df):
             out.add(s)
     return out
 
-def _normalize_query_for_state_match(query, valid_abbrs):
-    """
-    Uppercase query for abbr matching, but remove the classic false positive:
-    the English preposition 'in' becomes 'IN' (Indiana). Pattern 'IN <STATE>'
-    is almost always 'in [State]', not Indiana + another state.
-    """
-    upper = query.upper()
-
-    def mask_in_before_state(m):
-        nxt = m.group(1)
-        return f"__PREP__ {nxt}" if nxt in valid_abbrs else m.group(0)
-
-    upper = re.sub(r"\bIN\s+([A-Z]{2})\b", mask_in_before_state, upper)
-    return upper
-
 def _infer_state_from_query(query, df):
-    """Return a single USPS abbr or None, using leftmost mention in the query."""
-    valid_abbrs = _valid_state_abbrs(df)
-    normalized = _normalize_query_for_state_match(query, valid_abbrs)
+    """
+    Return a single USPS state abbreviation or None.
 
-    # Longest name first so e.g. 'NEW YORK' wins over 'NEW' noise.
+    Strategy (in order):
+      1. Match a full state name case-insensitively ('New Jersey', 'Indiana').
+      2. Match a two-letter abbreviation that is UPPERCASE in the original
+         query ('NJ', 'TX'). This avoids the classic false positives where
+         common English words collide with state codes after an uppercase()
+         call: 'me' -> ME (Maine), 'or' -> OR (Oregon), 'hi' -> HI (Hawaii),
+         'in' -> IN (Indiana), 'ok' -> OK (Oklahoma).
+      3. Skip 'IN' when it's being used as the English preposition immediately
+         before another state abbreviation (e.g. 'opportunities IN NJ').
+    """
+    valid_abbrs = _valid_state_abbrs(df)
+    q = str(query or "")
+    if not q:
+        return None
+
+    upper = q.upper()
     for name in sorted(_STATE_NAME_TO_ABBR, key=len, reverse=True):
         abbr = _STATE_NAME_TO_ABBR[name]
         if abbr not in valid_abbrs:
             continue
-        if re.search(rf"\b{re.escape(name)}\b", normalized):
+        if re.search(rf"\b{re.escape(name)}\b", upper):
             return abbr
 
-    best_abbr, best_pos = None, len(normalized) + 1
-    for abbr in sorted(valid_abbrs):
-        m = re.search(rf"\b{re.escape(abbr)}\b", normalized)
-        if m and m.start() < best_pos:
-            best_pos, best_abbr = m.start(), abbr
-    return best_abbr
+    matches = list(re.finditer(r"\b([A-Z]{2})\b", q))
+    for i, m in enumerate(matches):
+        abbr = m.group(1)
+        if abbr not in valid_abbrs:
+            continue
+        # 'IN' immediately followed by another state abbr is the preposition.
+        if abbr == "IN" and i + 1 < len(matches) and matches[i + 1].group(1) in valid_abbrs:
+            continue
+        return abbr
+    return None
 
 def extract_npi(query):
     """Return the first standalone 10-digit NPI in the query, else None."""

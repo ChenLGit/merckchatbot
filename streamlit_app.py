@@ -19,6 +19,7 @@ if src_path not in sys.path:
 from src.router import get_intent
 from src.visualizations import plot_executive_map
 from src.rag_engine import get_hcp_scorecard, extract_npi
+from src.news_engine import get_competitor_brief
 
 try:
     from src.prompts import SYSTEM_PERSONAS
@@ -49,6 +50,58 @@ def _format_opportunity_markdown(scorecard, insight_text=None):
     if insight_text:
         md += f"\n\n💡 **AI Insight:** {insight_text}"
     return md
+
+def _format_news_markdown(brief, recommendation_text=None):
+    """Render the competitor-news view: inferred scope, internal billing mix,
+    live headlines, and an AI-synthesized marketing recommendation."""
+    state = brief.get("state")
+    scope_label = f"State: {state}" if state else "Scope: National"
+    lines = [
+        f"### 📰 Competitor Intelligence ({scope_label})",
+    ]
+
+    share = brief.get("share") or {}
+    if share:
+        lines.append("**Internal billing-share mix (avg across providers):**")
+        sorted_share = sorted(share.items(), key=lambda kv: (kv[1] if kv[1] == kv[1] else -1), reverse=True)
+        for label, val in sorted_share:
+            try:
+                val_fmt = f"{float(val):.2f}"
+            except (TypeError, ValueError):
+                val_fmt = "n/a"
+            lines.append(f"- **{label}:** {val_fmt}")
+
+    news = brief.get("news")
+    if news is None:
+        lines.append("_Live news search unavailable (package missing or network blocked)._")
+    elif not news:
+        lines.append("_No recent articles returned for the inferred competitors._")
+    else:
+        lines.append("**Recent headlines:**")
+        for item in news[:8]:
+            title = item.get("title") or "(untitled)"
+            source = item.get("source") or ""
+            date = item.get("date") or ""
+            url = item.get("url") or ""
+            meta_bits = " · ".join([b for b in [source, date] if b])
+            if url:
+                lines.append(f"- [{title}]({url}) — {meta_bits}")
+            else:
+                lines.append(f"- {title} — {meta_bits}")
+
+    top_hcp = brief.get("top_hcp")
+    if top_hcp:
+        lines.append(
+            f"**Anchor HCP for marketing ({scope_label}):** "
+            f"NPI {top_hcp['npi']} — {top_hcp.get('city', 'N/A')}, {top_hcp['state']} · "
+            f"Propensity {top_hcp['score']:.1%} · Preferred Channel: {top_hcp.get('channel', 'Unknown')}"
+        )
+
+    md = "\n\n".join(lines)
+    if recommendation_text:
+        md += f"\n\n🎯 **Strategic Recommendation:** {recommendation_text}"
+    return md
+
 
 def _format_marketing_markdown(scorecard, strategy_text=None):
     """Renders the marketing strategy view for the same provider the
@@ -95,6 +148,14 @@ def load_data():
     return df
 
 df = load_data()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_competitor_brief(prompt_text: str):
+    """Cache competitor briefs for 10 minutes per prompt so Streamlit reruns
+    don't re-hit the network. The df is captured by reference from the outer
+    scope but doesn't change during a session."""
+    return get_competitor_brief(prompt_text, df)
 
 # ==========================================================================
 # 2. MAIN UI LAYOUT
@@ -224,8 +285,77 @@ with chat_col:
                     assistant_content = "Could not find a high-propensity target for strategy analysis."
 
         elif intent == "NEWS":
-            assistant_content = "### 📰 News scan\n\nScanning competitive landscape and clinical trial results..."
-        
+            with st.spinner("Scanning competitor news and internal billing mix..."):
+                brief = _cached_competitor_brief(prompt)
+
+            # Build compact context for the LLM: internal share + headlines + top HCP.
+            share = brief.get("share") or {}
+            share_ctx = "\n".join([f"- {k}: {v}" for k, v in share.items()]) or "- (no CSV share data)"
+
+            news = brief.get("news") or []
+            if news:
+                news_ctx = "\n".join([
+                    f"- ({n.get('date') or 'n/d'}) [{n.get('source') or '?'}] "
+                    f"{n.get('title') or ''} :: {(n.get('body') or '')[:240]}"
+                    for n in news[:8]
+                ])
+            else:
+                news_ctx = "- (no live news available)"
+
+            top_hcp = brief.get("top_hcp")
+            if top_hcp:
+                anchor_ctx = (
+                    f"NPI {top_hcp['npi']} in {top_hcp.get('city', 'N/A')}, {top_hcp['state']}; "
+                    f"propensity {float(top_hcp['score']):.3f}; "
+                    f"preferred channel {top_hcp.get('channel', 'Unknown')}; "
+                    f"digital adoption {top_hcp.get('digital_score', 0)}; "
+                    f"days since last engagement {top_hcp.get('last_engagement', 0)}."
+                )
+            else:
+                anchor_ctx = "(no anchor HCP available for this scope)"
+
+            scope_label = brief.get("state") or "US (national)"
+            try:
+                persona = SYSTEM_PERSONAS.get(
+                    "market_strategist",
+                    "You are a Merck Market Intelligence Lead.",
+                )
+                news_prompt = f"""
+                    USER QUESTION:
+                    {prompt}
+
+                    SCOPE: {scope_label}
+
+                    INTERNAL BILLING-SHARE MIX (average across providers in scope):
+                    {share_ctx}
+
+                    RECENT COMPETITOR HEADLINES (last ~month):
+                    {news_ctx}
+
+                    ANCHOR HCP FOR MARKETING ACTIONS:
+                    {anchor_ctx}
+
+                    TASK:
+                    In 4-6 short bullet points, summarize the most important
+                    competitor movement for this scope and recommend a concrete
+                    marketing response for Keytruda. When possible, reference
+                    the anchor HCP's preferred channel and engagement recency.
+                    Call out uncertainty if the live news is sparse.
+                """
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": persona},
+                        {"role": "user", "content": news_prompt},
+                    ],
+                    temperature=0.3,
+                )
+                recommendation = res.choices[0].message.content
+            except Exception as e:
+                recommendation = f"_(Recommendation unavailable: {str(e)[:80]})_"
+
+            assistant_content = _format_news_markdown(brief, recommendation)
+
         else:
             assistant_content = f"_(Unhandled intent: {intent})_"
 
