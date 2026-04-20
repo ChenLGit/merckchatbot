@@ -22,9 +22,12 @@ from src.rag_engine import get_hcp_scorecard, extract_npi
 from src.news_engine import get_competitor_brief
 
 try:
-    from src.prompts import SYSTEM_PERSONAS
+    from src.prompts import SYSTEM_PERSONAS, build_system_prompt
 except ImportError:
     SYSTEM_PERSONAS = {}
+
+    def build_system_prompt(role_key):  # type: ignore[no-redef]
+        return SYSTEM_PERSONAS.get(role_key, "You are a Merck Keytruda brand advisor.")
 
 # ---------------------------------
 # Helpers: Format Outputs
@@ -178,7 +181,7 @@ with main_col:
     with header_right:
         st.markdown("""
             <div style="background-color: #f0f2f6; padding: 12px 18px; border-radius: 8px; border: 1px solid #dcdcdc; margin-top: 15px;">
-                <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">Lead: Chen Liu</p>
+                <p style="margin: 0; font-family: sans-serif; font-size: 14px; color: #31333F; font-weight: bold;">Developer: Chen Liu</p>
                 <p style="margin: 0; font-family: sans-serif; font-size: 12px; color: #555;">Data Science & AI Leadership</p>
             </div>
         """, unsafe_allow_html=True)
@@ -193,7 +196,7 @@ with main_col:
     st.plotly_chart(plot_executive_map(df), width='stretch')
 
 with chat_col:
-    st.markdown("### 🤖 Strategy Assistant")
+    st.markdown("### AI Brand Strategy Assistant")
     groq_api_key = st.secrets.get("GROQ_API_KEY")
     if not groq_api_key:
         st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
@@ -227,7 +230,7 @@ with chat_col:
             scorecard = get_hcp_scorecard(prompt, df)
             if scorecard:
                 try:
-                    persona = SYSTEM_PERSONAS.get("data_analyst", "You are a Merck Lead Data Scientist.")
+                    persona = build_system_prompt("data_analyst")
                     analysis_prompt = f"""
                         HCP PROFILE DATA:
                         - NPI: {scorecard['npi']}
@@ -258,12 +261,12 @@ with chat_col:
             scorecard = get_hcp_scorecard(prompt, df)
             if scorecard:
                 try:
-                    persona = SYSTEM_PERSONAS.get("marketing_specialist", "You are a Merck Marketing Lead.")
+                    persona = build_system_prompt("marketing_specialist")
                     mkt_prompt = f"""
                         HCP CONTEXT:
-                        - Digital Adoption Score: {scorecard.get('digital_score', 0)}
-                        - Days Since Last Engagement: {scorecard.get('last_engagement', 0)}
-                        - Historically Preferred Channel: {scorecard.get('channel', 'Unknown')}
+                        - Digital Adoption Score: {scorecard.get('digital_score', 'N/A')}
+                        - Days Since Last Engagement: {scorecard.get('last_engagement', 'N/A')}
+                        - Historically Preferred Channel: {scorecard.get('channel', 'Did not engage recently')}
 
                         TASK:
                         Suggest a 'Next Best Action' (NBA) strategy to increase adoption. 
@@ -316,10 +319,7 @@ with chat_col:
 
             scope_label = brief.get("state") or "US (national)"
             try:
-                persona = SYSTEM_PERSONAS.get(
-                    "market_strategist",
-                    "You are a Merck Market Intelligence Lead.",
-                )
+                persona = build_system_prompt("market_strategist")
                 news_prompt = f"""
                     USER QUESTION:
                     {prompt}
@@ -355,6 +355,50 @@ with chat_col:
                 recommendation = f"_(Recommendation unavailable: {str(e)[:80]})_"
 
             assistant_content = _format_news_markdown(brief, recommendation)
+
+        elif intent == "GENERAL":
+            # Fallback brand-advisor flow for questions that don't fit the
+            # three targeted intents. The LLM still gets brand identity via
+            # build_system_prompt, plus a small snapshot of our dataset so
+            # it can answer light "what do we have on X" questions.
+            dataset_snapshot = (
+                f"- Total providers in our targeting table: {len(df):,}\n"
+                f"- High-propensity providers (pred_class == 1): {int((df['pred_class'] == 1).sum()):,}\n"
+                f"- States covered: {df['Rndrng_Prvdr_State_Abrvtn'].nunique()}\n"
+                f"- Provider specialties tracked: {df['Cleaned_Prvdr_Type'].nunique()}"
+            )
+            try:
+                persona = build_system_prompt("brand_generalist")
+                general_prompt = f"""
+                    USER QUESTION:
+                    {prompt}
+
+                    APPLICATION DATA SNAPSHOT (MerckAI_table.csv):
+                    {dataset_snapshot}
+
+                    INSTRUCTION:
+                    Answer the user's question as a Merck Keytruda brand advisor.
+                    If the question is about oncology science, IO mechanism of action,
+                    market dynamics, or general strategy, draw on your broader knowledge.
+                    If the question could be answered with the data snapshot above,
+                    use those numbers directly. Keep the response concise (under ~8
+                    bullets or a short paragraph). If the question is clearly better
+                    served by a specific NPI lookup, competitor-news search, or
+                    marketing tactic, suggest the user rephrase to that intent.
+                """
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": persona},
+                        {"role": "user", "content": general_prompt},
+                    ],
+                    temperature=0.4,
+                )
+                assistant_content = (
+                    "### 🧬 Brand Advisor\n\n" + res.choices[0].message.content
+                )
+            except Exception as e:
+                assistant_content = f"_(Brand Advisor unavailable: {str(e)[:80]})_"
 
         else:
             assistant_content = f"_(Unhandled intent: {intent})_"
