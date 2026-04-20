@@ -18,7 +18,7 @@ if src_path not in sys.path:
 
 from src.router import get_intent
 from src.visualizations import plot_executive_map
-from src.rag_engine import get_hcp_scorecard, _extract_npi
+from src.rag_engine import get_hcp_scorecard, extract_npi
 
 try:
     from src.prompts import SYSTEM_PERSONAS
@@ -160,7 +160,7 @@ with chat_col:
         assistant_content = ""
         client = Groq(api_key=groq_api_key)
 
-        requested_npi = _extract_npi(prompt)
+        requested_npi = extract_npi(prompt)
 
         if intent == "OPPORTUNITY":
             scorecard = get_hcp_scorecard(prompt, df)

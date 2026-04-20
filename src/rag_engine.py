@@ -59,12 +59,15 @@ def _infer_state_from_query(query, df):
             best_pos, best_abbr = m.start(), abbr
     return best_abbr
 
-def _extract_npi(query):
+def extract_npi(query):
     """Return the first standalone 10-digit NPI in the query, else None."""
     if not query:
         return None
     m = re.search(r"(?<!\d)(\d{10})(?!\d)", str(query))
     return m.group(1) if m else None
+
+
+_extract_npi = extract_npi
 
 
 def _lookup_by_npi(df, npi):
@@ -87,7 +90,7 @@ def get_hcp_scorecard(query, df):
     # 1. Explicit NPI lookup overrides any other filter so the user always
     #    gets exactly the provider they asked about, regardless of intent.
     matched_by_npi = False
-    npi_requested = _extract_npi(query)
+    npi_requested = extract_npi(query)
     if npi_requested:
         row = _lookup_by_npi(df, npi_requested)
         if row is None:
