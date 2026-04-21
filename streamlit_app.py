@@ -17,6 +17,7 @@ if src_path not in sys.path:
     sys.path.append(src_path)
 
 from src.router import get_intent, get_intents
+from src.planner import plan_actions
 from src.visualizations import plot_executive_map
 from src.rag_engine import get_hcp_scorecard, extract_npi
 from src.news_engine import get_competitor_brief
@@ -378,6 +379,13 @@ with chat_col:
         st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
         st.stop()
 
+    # Feature flag: primary routing path.
+    #   True  -> LLM tool-calling planner (src/planner.py)
+    #   False -> legacy intent classifier + state-machine queue (src/router.py)
+    # The legacy path is also used automatically as a fallback whenever the
+    # planner errors out, so we can roll back without a deploy.
+    USE_PLANNER = bool(st.secrets.get("USE_PLANNER", True))
+
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -614,6 +622,111 @@ with chat_col:
             return f"_(Unhandled intent: {intent})_"
         return handler(original_prompt, client)
 
+    # ----------------------------------------------------------------------
+    # Planner-mode (Option 2) dispatch
+    # ----------------------------------------------------------------------
+    # The planner in `src/planner.py` emits an ordered list of tool calls
+    # with already-extracted arguments. We dispatch each call to the
+    # existing `_answer_*` handler, augmenting the original prompt with any
+    # structured hints (state, NPI, competitor keys) so the downstream
+    # prompt-based inference in `rag_engine` / `news_engine` still works
+    # without any changes to those modules.
+    def _augment_prompt_with_args(original_prompt: str, args: dict) -> str:
+        extras: list[str] = []
+        npi = args.get("npi")
+        if isinstance(npi, (str, int)) and str(npi).strip():
+            extras.append(f"NPI {str(npi).strip()}")
+        state = args.get("state")
+        if isinstance(state, str) and state.strip():
+            extras.append(state.strip().upper())
+        comps = args.get("competitors") or []
+        if isinstance(comps, list) and comps:
+            extras.append(" ".join(str(c) for c in comps))
+        if not extras:
+            return original_prompt
+        return f"{original_prompt}  [planner hints: {' | '.join(extras)}]"
+
+    def _dispatch_planner_call(
+        name: str,
+        args: dict,
+        original_prompt: str,
+        client: Groq,
+    ) -> str | None:
+        """Run one planner-emitted tool call and return its markdown string,
+        or None if the tool name is unrecognized."""
+        args = args or {}
+        if name == "general_advisor":
+            # If the planner answered in prose (no real tool_calls path in
+            # `src/planner.py`), surface that text directly instead of
+            # re-prompting the general advisor.
+            prose = args.get("_prose")
+            if isinstance(prose, str) and prose.strip():
+                return "### General Advisor\n\n" + prose.strip()
+            question = args.get("question") or original_prompt
+            return _answer_general(question, client)
+        if name == "get_hcp_opportunity":
+            return _answer_opportunity(_augment_prompt_with_args(original_prompt, args), client)
+        if name == "get_marketing_strategy":
+            return _answer_marketing(_augment_prompt_with_args(original_prompt, args), client)
+        if name == "get_competitor_news":
+            return _answer_news(_augment_prompt_with_args(original_prompt, args), client)
+        if name == "summarize_article":
+            items = st.session_state.get("last_news_items") or []
+            raw_idx = args.get("headline_index")
+            try:
+                idx = int(raw_idx)
+            except (TypeError, ValueError):
+                idx = -1
+            if not items or not (0 <= idx < len(items)):
+                return (
+                    "_(I don't have a cached headline that matches. "
+                    "Ask for competitor news first, then request a summary.)_"
+                )
+            return _answer_news_summary(items[idx], client)
+        return None
+
+    def _run_with_planner(user_prompt: str, client: Groq) -> str | None:
+        """Plan + execute in planner mode. Returns assistant markdown, or
+        None if the planner failed (caller should use the legacy path)."""
+        cached = st.session_state.get("last_news_items") or []
+        history = st.session_state.get("messages") or []
+        with st.spinner("Planning..."):
+            plan = plan_actions(
+                user_prompt,
+                groq_api_key,
+                cached_headlines=cached,
+                history=history,
+            )
+        if plan is None:
+            # Hard failure inside the planner -> signal fallback.
+            return None
+        if not plan:
+            plan = [{"name": "general_advisor", "args": {"question": user_prompt}, "id": ""}]
+
+        sections: list[str] = []
+        for call in plan:
+            try:
+                out = _dispatch_planner_call(
+                    call.get("name") or "",
+                    call.get("args") or {},
+                    user_prompt,
+                    client,
+                )
+            except Exception as e:  # noqa: BLE001
+                out = f"_(Tool `{call.get('name')}` failed: {str(e)[:80]})_"
+            if out:
+                sections.append(out)
+
+        if not sections:
+            return None
+
+        # Planner mode doesn't use the legacy confirmation queue; keep any
+        # leftover state from legacy turns cleared so we don't re-ask.
+        st.session_state.intent_queue = []
+        st.session_state.original_prompt = ""
+        st.session_state.pending_followup = False
+        return "\n\n---\n\n".join(sections)
+
     def _followup_question_md(just_answered: str, up_next: str) -> str:
         label_done = INTENT_LABEL.get(just_answered, just_answered.lower())
         label_next = INTENT_LABEL.get(up_next, up_next.lower())
@@ -759,6 +872,22 @@ with chat_col:
 
         client = Groq(api_key=groq_api_key)
 
+        # Planner-mode primary path. We skip the planner if the user is
+        # mid-followup in a legacy queue so the yes/no UX stays consistent.
+        assistant_content = None
+        if USE_PLANNER and not st.session_state.pending_followup:
+            assistant_content = _run_with_planner(prompt, client)
+
+        if assistant_content is not None:
+            # Planner handled this turn.
+            st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+            with chat_box:
+                with st.chat_message("assistant", avatar="🧬"):
+                    st.markdown(assistant_content)
+            st.stop()
+
+        # ---- Legacy path (automatic fallback on planner failure, or when
+        # USE_PLANNER is disabled, or when we're mid-followup). ----
         if st.session_state.pending_followup:
             reply_kind = _classify_followup_reply(prompt)
             if reply_kind == "YES":
