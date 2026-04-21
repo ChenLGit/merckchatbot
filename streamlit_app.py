@@ -733,12 +733,13 @@ with chat_col:
     # ----------------------------------------------------------------------
     # LangGraph-mode (Option 3) runner
     # ----------------------------------------------------------------------
-    # The LangGraph agent in `src/agent_graph.py` wraps the planner above in
-    # a 5-node state graph that adds a grounding_check guardrail (no
-    # hallucinated NPIs) and an LLM-as-judge reflection loop (one retry).
-    # This function only handles building + invoking the graph; if anything
-    # throws (e.g. langgraph not installed), we return None so the caller
-    # can fall back to the native planner path.
+    # The LangGraph agent in `src/agent_graph.py` wraps the planner above
+    # in a 6-node state graph with two responsible-AI guardrails
+    # (grounding_check and competitor_claim_check) and a reflection loop.
+    # We use `graph.stream(..., stream_mode="updates")` and surface each
+    # node's completion live in an `st.status` panel so the demo shows
+    # the agent "thinking" step by step. On any hard failure the function
+    # returns None, and the caller falls back to the native planner path.
     def _verify_npi_in_df(npi: str) -> bool:
         """Return True iff the NPI exists in the targeting table `df`."""
         try:
@@ -751,8 +752,52 @@ with chat_col:
         except Exception:  # noqa: BLE001
             return True  # fail-open: don't block on lookup errors
 
+    def _news_snapshot() -> list[dict]:
+        """Ground truth for competitor_claim_check: whatever news items
+        the most recent get_competitor_news dispatch cached."""
+        return list(st.session_state.get("last_news_items") or [])
+
+    def _format_graph_event(node: str, out: dict) -> str:
+        """Render a single `graph.stream` update as one Markdown status line.
+        Each retry re-emits the same nodes so the loop is visually obvious."""
+        out = out or {}
+        if node == "plan":
+            if out.get("planner_failed"):
+                return "⚠️ **plan** — planner unavailable"
+            plan = out.get("plan") or []
+            if not plan:
+                return "✓ **plan** — no tool calls"
+            tool_names = ", ".join(
+                str(c.get("name") or "?") for c in plan
+            )
+            return f"✓ **plan** — {len(plan)} tool call(s): `{tool_names}`"
+        if node == "execute":
+            n = len(out.get("outputs") or [])
+            return f"✓ **execute** — {n} section(s) drafted"
+        if node == "grounding_check":
+            if out.get("grounding") == "HALLUCINATION":
+                flagged = ", ".join(out.get("flagged_npis") or [])
+                return f"⚠️ **grounding_check** — flagged NPI(s): {flagged}"
+            return "✓ **grounding_check** — no hallucinated NPIs"
+        if node == "competitor_claim_check":
+            if out.get("competitor_claim") == "UNSUPPORTED":
+                note = (out.get("competitor_claim_note") or "").strip()
+                return (
+                    f"⚠️ **competitor_claim_check** — unsupported claim"
+                    + (f": {note[:140]}" if note else "")
+                )
+            return "✓ **competitor_claim_check** — claims OK"
+        if node == "reflect":
+            if out.get("reflection") == "RETRY":
+                note = (out.get("reflection_note") or "").strip()
+                return f"🔁 **reflect** — RETRY ({note[:120]})"
+            return "✓ **reflect** — answer approved"
+        if node == "finalize":
+            return "✓ **finalize** — answer ready"
+        return f"• **{node}**"
+
     def _run_with_langgraph(user_prompt: str, client: Groq) -> str | None:
-        """Build and invoke the LangGraph agent for one user turn.
+        """Build and stream the LangGraph agent for one user turn.
         Returns assistant markdown, or None on hard failure so the caller
         can fall back to `_run_with_planner`."""
         try:
@@ -778,6 +823,7 @@ with chat_col:
                 _dispatch_fn,
                 _verify_npi_in_df,
                 groq_api_key,
+                news_snapshot_fn=_news_snapshot,
             )
         except Exception as e:  # noqa: BLE001
             print(f"LangGraph build error: {e}")
@@ -786,19 +832,41 @@ with chat_col:
         cached = st.session_state.get("last_news_items") or []
         history = st.session_state.get("messages") or []
 
+        # `stream_mode="updates"` yields `{node_name: partial_state}` after
+        # each node finishes. We merge them into `final_state` to recover
+        # the complete state at the end (there's no single full-state
+        # snapshot in "updates" mode).
+        final_state: dict = {}
         try:
-            with st.spinner("Running agent graph (plan → execute → ground → reflect)..."):
-                result = graph.invoke({
-                    "user_prompt": user_prompt,
-                    "cached_headlines": cached,
-                    "history": history,
-                    "retry_count": 0,
-                })
+            with st.status("Agent graph: running…", expanded=True) as status:
+                status.write("▶ **start** — routing user query through the graph")
+                for event in graph.stream(
+                    {
+                        "user_prompt": user_prompt,
+                        "cached_headlines": cached,
+                        "history": history,
+                        "retry_count": 0,
+                    },
+                    stream_mode="updates",
+                ):
+                    if not isinstance(event, dict):
+                        continue
+                    for node_name, node_output in event.items():
+                        if node_name in ("__start__", "__end__"):
+                            continue
+                        status.write(_format_graph_event(node_name, node_output or {}))
+                        if isinstance(node_output, dict):
+                            final_state.update(node_output)
+                status.update(
+                    label="Agent graph: complete",
+                    state="complete",
+                    expanded=False,
+                )
         except Exception as e:  # noqa: BLE001
-            print(f"LangGraph invoke error: {e}")
+            print(f"LangGraph stream error: {e}")
             return None
 
-        final = (result or {}).get("final_answer") if isinstance(result, dict) else None
+        final = final_state.get("final_answer")
         if not final:
             return None
 
