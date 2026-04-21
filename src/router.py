@@ -1,3 +1,5 @@
+import re
+
 from groq import Groq
 try:
     # We import the dictionary here. 
@@ -7,6 +9,35 @@ except ImportError:
     ROUTING_PROMPTS = {}
 
 INTENT_PRIORITY = ["GENERAL", "OPPORTUNITY", "MARKETING", "NEWS"]
+
+# Cues that indicate the user is explicitly asking a GENERAL / definitional
+# question, even if they ALSO ask about a specific intent in the same sentence.
+# When any of these appear, we keep GENERAL in the intent list instead of
+# treating it as a catch-all.
+_GENERAL_CUE_PATTERNS = [
+    r"\blist\b",
+    r"\bwho are\b",
+    r"\bwhat are\b",
+    r"\bwhat is\b",
+    r"\bname (the|all|keytruda's|merck's)\b",
+    r"\bdefine\b",
+    r"\bexplain\b",
+    r"\bhow does\b",
+    r"\bhow do\b",
+    r"\btell me about\b",
+    r"\bmain competitor",
+    r"\bmain competitors\b",
+    r"\bdirect competitor",
+    r"\bcompete with\b",
+]
+
+
+def _has_general_cue(text):
+    """True if the user explicitly asks a definitional/general question."""
+    if not text:
+        return False
+    t = str(text).lower()
+    return any(re.search(p, t) for p in _GENERAL_CUE_PATTERNS)
 
 
 def get_intents(user_input, api_key):
@@ -34,13 +65,26 @@ def get_intents(user_input, api_key):
         raw = response.choices[0].message.content.upper()
 
         found_order = [intent for intent in INTENT_PRIORITY if intent in raw]
+
+        # Guarantee GENERAL when the user explicitly asked a definitional
+        # question, even if the classifier didn't return it.
+        if _has_general_cue(user_input) and "GENERAL" not in found_order:
+            found_order = ["GENERAL"] + found_order
+
         if not found_order:
             return ["GENERAL"]
 
-        # Drop GENERAL if a specific intent is also present, so "top NJ
-        # opportunity" doesn't also trigger a GENERAL brand-advisor answer.
-        if len(found_order) > 1 and "GENERAL" in found_order:
+        # Only drop GENERAL when it looks like a catch-all. If the user
+        # query carries an explicit definitional cue ("list", "who are",
+        # "what are", etc.) we keep it alongside the specific intents so
+        # both get answered.
+        if (
+            len(found_order) > 1
+            and "GENERAL" in found_order
+            and not _has_general_cue(user_input)
+        ):
             found_order = [i for i in found_order if i != "GENERAL"]
+
         return found_order
 
     except Exception as e:
