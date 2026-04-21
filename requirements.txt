@@ -5,3 +5,6 @@ openai
 plotly
 ddgs
 requests
+langgraph
+langchain-core
+langchain-groq

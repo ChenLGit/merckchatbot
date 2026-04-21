@@ -379,11 +379,14 @@ with chat_col:
         st.error("Please add your GROQ_API_KEY to Streamlit Secrets.")
         st.stop()
 
-    # Feature flag: primary routing path.
-    #   True  -> LLM tool-calling planner (src/planner.py)
-    #   False -> legacy intent classifier + state-machine queue (src/router.py)
-    # The legacy path is also used automatically as a fallback whenever the
-    # planner errors out, so we can roll back without a deploy.
+    # Feature flags: routing paths, in priority order.
+    #   USE_LANGGRAPH -> LangGraph agent (src/agent_graph.py)
+    #                    [plan -> execute -> grounding_check -> reflect -> finalize]
+    #   USE_PLANNER   -> flat Groq tool-calling planner (src/planner.py)
+    #   (always on)   -> legacy intent classifier + state-machine queue (src/router.py)
+    # Each layer auto-falls-back to the next on failure, so the app always
+    # has a working path and we can roll back without a deploy.
+    USE_LANGGRAPH = bool(st.secrets.get("USE_LANGGRAPH", False))
     USE_PLANNER = bool(st.secrets.get("USE_PLANNER", True))
 
     if "messages" not in st.session_state:
@@ -727,6 +730,84 @@ with chat_col:
         st.session_state.pending_followup = False
         return "\n\n---\n\n".join(sections)
 
+    # ----------------------------------------------------------------------
+    # LangGraph-mode (Option 3) runner
+    # ----------------------------------------------------------------------
+    # The LangGraph agent in `src/agent_graph.py` wraps the planner above in
+    # a 5-node state graph that adds a grounding_check guardrail (no
+    # hallucinated NPIs) and an LLM-as-judge reflection loop (one retry).
+    # This function only handles building + invoking the graph; if anything
+    # throws (e.g. langgraph not installed), we return None so the caller
+    # can fall back to the native planner path.
+    def _verify_npi_in_df(npi: str) -> bool:
+        """Return True iff the NPI exists in the targeting table `df`."""
+        try:
+            s = df["Rndrng_NPI"].astype(str).str.strip()
+            if (s == str(npi).strip()).any():
+                return True
+            return bool(
+                (pd.to_numeric(df["Rndrng_NPI"], errors="coerce") == int(npi)).any()
+            )
+        except Exception:  # noqa: BLE001
+            return True  # fail-open: don't block on lookup errors
+
+    def _run_with_langgraph(user_prompt: str, client: Groq) -> str | None:
+        """Build and invoke the LangGraph agent for one user turn.
+        Returns assistant markdown, or None on hard failure so the caller
+        can fall back to `_run_with_planner`."""
+        try:
+            from src.agent_graph import build_agent_graph
+        except ImportError as e:
+            print(f"LangGraph import error: {e}")
+            return None
+
+        def _planner_fn(u, h, hist):
+            return plan_actions(
+                u,
+                groq_api_key,
+                cached_headlines=h,
+                history=hist,
+            )
+
+        def _dispatch_fn(name, args, original_prompt):
+            return _dispatch_planner_call(name, args, original_prompt, client)
+
+        try:
+            graph = build_agent_graph(
+                _planner_fn,
+                _dispatch_fn,
+                _verify_npi_in_df,
+                groq_api_key,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"LangGraph build error: {e}")
+            return None
+
+        cached = st.session_state.get("last_news_items") or []
+        history = st.session_state.get("messages") or []
+
+        try:
+            with st.spinner("Running agent graph (plan → execute → ground → reflect)..."):
+                result = graph.invoke({
+                    "user_prompt": user_prompt,
+                    "cached_headlines": cached,
+                    "history": history,
+                    "retry_count": 0,
+                })
+        except Exception as e:  # noqa: BLE001
+            print(f"LangGraph invoke error: {e}")
+            return None
+
+        final = (result or {}).get("final_answer") if isinstance(result, dict) else None
+        if not final:
+            return None
+
+        # LangGraph mode, like planner mode, doesn't use the legacy queue.
+        st.session_state.intent_queue = []
+        st.session_state.original_prompt = ""
+        st.session_state.pending_followup = False
+        return final
+
     def _followup_question_md(just_answered: str, up_next: str) -> str:
         label_done = INTENT_LABEL.get(just_answered, just_answered.lower())
         label_next = INTENT_LABEL.get(up_next, up_next.lower())
@@ -872,22 +953,28 @@ with chat_col:
 
         client = Groq(api_key=groq_api_key)
 
-        # Planner-mode primary path. We skip the planner if the user is
-        # mid-followup in a legacy queue so the yes/no UX stays consistent.
+        # Primary paths, in priority order. Each returns None on hard
+        # failure so we fall through to the next layer. We skip both
+        # modern paths if the user is mid-followup in a legacy queue so
+        # the yes/no UX stays consistent.
         assistant_content = None
-        if USE_PLANNER and not st.session_state.pending_followup:
-            assistant_content = _run_with_planner(prompt, client)
+        if not st.session_state.pending_followup:
+            if USE_LANGGRAPH:
+                assistant_content = _run_with_langgraph(prompt, client)
+            if assistant_content is None and USE_PLANNER:
+                assistant_content = _run_with_planner(prompt, client)
 
         if assistant_content is not None:
-            # Planner handled this turn.
+            # LangGraph or planner handled this turn.
             st.session_state.messages.append({"role": "assistant", "content": assistant_content})
             with chat_box:
                 with st.chat_message("assistant", avatar="🧬"):
                     st.markdown(assistant_content)
             st.stop()
 
-        # ---- Legacy path (automatic fallback on planner failure, or when
-        # USE_PLANNER is disabled, or when we're mid-followup). ----
+        # ---- Legacy path (automatic fallback when all modern paths
+        # returned None, or when both feature flags are off, or when
+        # we're mid-followup). ----
         if st.session_state.pending_followup:
             reply_kind = _classify_followup_reply(prompt)
             if reply_kind == "YES":
