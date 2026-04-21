@@ -397,7 +397,7 @@ with chat_col:
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    chat_box = st.container(height=650, border=True)
+    chat_box = st.container(height=560, border=True)
 
     with chat_box:
         for message in st.session_state.messages:
@@ -1043,83 +1043,85 @@ with chat_col:
         return content
 
     if prompt := st.chat_input("Ask about opportunities, marketing, competitor news, or anything Keytruda..."):
+        # Keep every per-turn UI element (user bubble, st.status progress
+        # panel, spinners, assistant bubble) rendered *inside* chat_box
+        # so the whole chat column stays within a fixed height budget
+        # and visually lines up with the left BI column.
         with chat_box:
             st.chat_message("user", avatar="👤").markdown(prompt)
-        st.session_state.messages.append({"role": "user", "content": prompt})
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
-        client = Groq(api_key=groq_api_key)
+            client = Groq(api_key=groq_api_key)
 
-        # Primary paths, in priority order. Each returns None on hard
-        # failure so we fall through to the next layer. We skip both
-        # modern paths if the user is mid-followup in a legacy queue so
-        # the yes/no UX stays consistent.
-        assistant_content = None
-        if not st.session_state.pending_followup:
-            if USE_LANGGRAPH:
-                assistant_content = _run_with_langgraph(prompt, client)
-            if assistant_content is None and USE_PLANNER:
-                assistant_content = _run_with_planner(prompt, client)
+            # Primary paths, in priority order. Each returns None on hard
+            # failure so we fall through to the next layer. We skip both
+            # modern paths if the user is mid-followup in a legacy queue so
+            # the yes/no UX stays consistent.
+            assistant_content = None
+            if not st.session_state.pending_followup:
+                if USE_LANGGRAPH:
+                    assistant_content = _run_with_langgraph(prompt, client)
+                if assistant_content is None and USE_PLANNER:
+                    assistant_content = _run_with_planner(prompt, client)
 
-        if assistant_content is not None:
-            # LangGraph or planner handled this turn.
-            st.session_state.messages.append({"role": "assistant", "content": assistant_content})
-            with chat_box:
+            if assistant_content is not None:
+                # LangGraph or planner handled this turn.
+                st.session_state.messages.append({"role": "assistant", "content": assistant_content})
                 with st.chat_message("assistant", avatar="🧬"):
                     st.markdown(assistant_content)
-            st.stop()
+                st.stop()
 
-        # ---- Legacy path (automatic fallback when all modern paths
-        # returned None, or when both feature flags are off, or when
-        # we're mid-followup). ----
-        if st.session_state.pending_followup:
-            reply_kind = _classify_followup_reply(prompt)
-            if reply_kind == "YES":
-                st.session_state.pending_followup = False
-                assistant_content = _continue_queue(client)
-            elif reply_kind == "NO":
-                st.session_state.intent_queue = []
-                st.session_state.original_prompt = ""
-                st.session_state.pending_followup = False
-                assistant_content = (
-                    "Understood — I'll drop that follow-up. "
-                    "What would you like to look at next?"
-                )
-            elif reply_kind == "UNCLEAR":
-                # Keep the queue + original_prompt intact so a typo like "Ye"
-                # doesn't wipe context. Re-prompt the user for a clear answer.
-                next_intent = (
-                    st.session_state.intent_queue[0]
-                    if st.session_state.intent_queue
-                    else None
-                )
-                if next_intent:
-                    label_next = INTENT_LABEL.get(next_intent, next_intent.lower())
-                    assistant_content = (
-                        f"I didn't quite catch that. Did you mean **yes** to continue "
-                        f"with **{label_next}** for your original question"
-                        + (
-                            f" _(\"{st.session_state.original_prompt}\")_"
-                            if st.session_state.original_prompt
-                            else ""
-                        )
-                        + ", or **no** to skip? You can also just type a new question."
-                    )
-                else:
+            # ---- Legacy path (automatic fallback when all modern paths
+            # returned None, or when both feature flags are off, or when
+            # we're mid-followup). ----
+            if st.session_state.pending_followup:
+                reply_kind = _classify_followup_reply(prompt)
+                if reply_kind == "YES":
+                    st.session_state.pending_followup = False
+                    assistant_content = _continue_queue(client)
+                elif reply_kind == "NO":
+                    st.session_state.intent_queue = []
+                    st.session_state.original_prompt = ""
                     st.session_state.pending_followup = False
                     assistant_content = (
-                        "I didn't quite catch that — could you rephrase what you'd "
-                        "like me to look into?"
+                        "Understood — I'll drop that follow-up. "
+                        "What would you like to look at next?"
                     )
+                elif reply_kind == "UNCLEAR":
+                    # Keep the queue + original_prompt intact so a typo like "Ye"
+                    # doesn't wipe context. Re-prompt the user for a clear answer.
+                    next_intent = (
+                        st.session_state.intent_queue[0]
+                        if st.session_state.intent_queue
+                        else None
+                    )
+                    if next_intent:
+                        label_next = INTENT_LABEL.get(next_intent, next_intent.lower())
+                        assistant_content = (
+                            f"I didn't quite catch that. Did you mean **yes** to continue "
+                            f"with **{label_next}** for your original question"
+                            + (
+                                f" _(\"{st.session_state.original_prompt}\")_"
+                                if st.session_state.original_prompt
+                                else ""
+                            )
+                            + ", or **no** to skip? You can also just type a new question."
+                        )
+                    else:
+                        st.session_state.pending_followup = False
+                        assistant_content = (
+                            "I didn't quite catch that — could you rephrase what you'd "
+                            "like me to look into?"
+                        )
+                else:
+                    # A new question -- drop any pending queue and start fresh.
+                    st.session_state.intent_queue = []
+                    st.session_state.original_prompt = ""
+                    st.session_state.pending_followup = False
+                    assistant_content = _start_fresh(prompt, client)
             else:
-                # A new question -- drop any pending queue and start fresh.
-                st.session_state.intent_queue = []
-                st.session_state.original_prompt = ""
-                st.session_state.pending_followup = False
                 assistant_content = _start_fresh(prompt, client)
-        else:
-            assistant_content = _start_fresh(prompt, client)
 
-        st.session_state.messages.append({"role": "assistant", "content": assistant_content})
-        with chat_box:
+            st.session_state.messages.append({"role": "assistant", "content": assistant_content})
             with st.chat_message("assistant", avatar="🧬"):
                 st.markdown(assistant_content)
