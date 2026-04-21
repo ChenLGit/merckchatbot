@@ -221,15 +221,41 @@ def build_agent_graph(
     def competitor_claim_check_node(state: AgentState) -> dict[str, Any]:
         """Fact-check specific competitor-drug claims against cached news.
 
-        Short-circuits when no competitor name appears in the draft, so
-        the LLM-as-judge call only fires when relevant. Always fails OPEN
-        on any internal error — a broken checker must never block a
-        legitimate answer.
+        Short-circuits in three cases so the LLM-as-judge only runs when
+        it can add signal:
+          1. No competitor name appears in the draft.
+          2. The plan is purely news / article-summary intent — the answer
+             IS a paraphrase of the news items, so judging it against the
+             same (truncated) snippets is near-guaranteed to produce false
+             positives for details that live further down in the article.
+          3. No cached news evidence exists to verify against.
+
+        Always fails OPEN on any internal error — a broken checker must
+        never block a legitimate answer.
         """
         draft = "\n\n".join(state.get("outputs") or [])
         low = draft.lower()
         if not any(tok in low for tok in _COMPETITOR_TOKENS):
             return {"competitor_claim": "OK", "competitor_claim_note": ""}
+
+        # (A) Skip for pure news/summary intents. The competitor-news tool's
+        # whole job is to paraphrase articles the user is already seeing;
+        # fact-checking that paraphrase against the same <=500-char snippet
+        # it was derived from flags legitimate article detail as
+        # "unsupported" and erodes trust in the guardrail.
+        plan = state.get("plan") or []
+        tool_names = {
+            (p.get("name") or "").strip()
+            for p in plan
+            if isinstance(p, dict)
+        }
+        tool_names.discard("")
+        _NEWS_INTENTS = {"get_competitor_news", "summarize_article"}
+        if tool_names and tool_names.issubset(_NEWS_INTENTS):
+            return {
+                "competitor_claim": "OK",
+                "competitor_claim_note": "skipped for news/summary intent",
+            }
 
         news_items: list[dict] = []
         if news_snapshot_fn is not None:
@@ -277,24 +303,32 @@ AVAILABLE NEWS EVIDENCE (the ONLY ground truth for recent-event claims):
 TASK:
 Identify every SPECIFIC, VERIFIABLE claim about a competitor drug or
 maker in the draft — e.g. "FDA approved X on DATE", "Opdivo showed a 20%
-response rate", "BMS announced Y partnership". For each, decide whether
-the evidence above supports it.
+response rate in trial Y", "BMS announced Y partnership with Z". For
+each, decide whether it is CONTRADICTED or INVENTED relative to the
+evidence above.
 
-IGNORE:
+IGNORE (treat as OK):
 - Generic / qualitative statements ("Opdivo is a PD-1 inhibitor",
   "Opdivo remains a key competitor", "the IO space is crowded").
+- Claims that merely ADD DETAIL beyond what a headline snippet shows
+  (e.g. draft names a trial readout date that isn't in the snippet).
+  News snippets here are truncated to ~500 chars; the full article
+  almost certainly contains more. Only flag if the added detail is
+  clearly fabricated or contradicted.
 - Keytruda-only statements (we only fact-check competitor claims here).
-- Market-share framing that references internal billing mix (that is
-  sourced from our own CSV, not news).
+- Market-share / billing-mix numbers (sourced from our own CSV, not news).
 
 Respond with JSON ONLY, matching this schema:
 
 {{"verdict": "OK" | "UNSUPPORTED",
   "note": "<if UNSUPPORTED, list the offending claim(s), <= 200 chars>"}}
 
-- "OK" if every specific competitor claim is supported by the evidence,
-  OR if the draft only contains generic/qualitative statements.
-- "UNSUPPORTED" if even one specific claim is not in the evidence.
+- "OK" — the default. Use OK unless a claim is clearly wrong.
+- "UNSUPPORTED" — use ONLY if a claim is directly CONTRADICTED by the
+  evidence (e.g. draft says "approved 2024" but evidence says "2023"),
+  or invents a specific number/date/event that the evidence cannot
+  plausibly support (e.g. draft cites a trial not mentioned anywhere).
+  Do NOT flag claims that are merely absent from the evidence snippets.
 """.strip()
 
             res = client.chat.completions.create(
