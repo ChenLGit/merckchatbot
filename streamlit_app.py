@@ -339,7 +339,7 @@ def _cached_competitor_brief(prompt_text: str):
 # ==========================================================================
 # 2. MAIN UI LAYOUT
 # ==========================================================================
-main_col, chat_col = st.columns([2.2, 1], gap="medium")
+main_col, chat_col = st.columns([1.5, 1], gap="medium")
 
 with main_col:
     header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")

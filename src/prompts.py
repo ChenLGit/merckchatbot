@@ -45,12 +45,22 @@ Classify the user's query into EXACTLY ONE of these categories:
    explanations, ranking top providers.
 2. MARKETING: Next-best-action, omnichannel messaging, field-rep engagement,
    per-HCP marketing tactics, channel / timing recommendations.
-3. NEWS: Competitor movement or clinical/regulatory news (Opdivo/BMS,
-   Tecentriq/Roche, Imfinzi/AstraZeneca, Libtayo/Regeneron), FDA updates,
-   clinical-trial readouts, Keytruda label or approval news.
-4. GENERAL: Anything else — oncology science, PD-1/PD-L1 mechanism of action,
-   pharma industry trends, market access, commercial strategy theory,
-   internal process questions, or questions about this application itself.
+3. NEWS: RECENT-EVENT questions about competitors or Keytruda — movement,
+   news, headlines, updates, announcements, FDA / clinical-trial readouts,
+   label changes, approvals, pipeline deals. Requires a time-sensitive cue
+   like "news", "recent", "latest", "update", "announcement", "movement",
+   "headline", "FDA approval", "trial readout", "happening".
+4. GENERAL: Everything else — including FACTUAL / DEFINITIONAL questions
+   about who the competitors are, what Keytruda is, PD-1/PD-L1 mechanism,
+   market access, commercial strategy theory, internal process questions,
+   or questions about this application itself.
+
+Disambiguation rules (critical):
+- "Who are Keytruda's competitors?" / "List Keytruda's competitors" /
+  "What drugs compete with Keytruda?" -> GENERAL (no recent-event cue).
+- "Opdivo news", "latest Tecentriq update", "recent competitor movement"
+  -> NEWS.
+- "What is Opdivo?" -> GENERAL (definitional, not news).
 
 Return ONLY one word: OPPORTUNITY, MARKETING, NEWS, or GENERAL.
 """.strip(),
@@ -70,15 +80,22 @@ Use ONLY these labels:
 - OPPORTUNITY: HCP targeting, NPI lookup, propensity / SHAP explanations,
   ranking top providers.
 - MARKETING: Next-best-action, omnichannel, channel / timing, per-HCP tactics.
-- NEWS: Competitor movement, FDA / clinical-trial news, Keytruda label news.
-- GENERAL: Oncology / IO science, industry trends, market access, strategy
-  theory, or questions about this application itself.
+- NEWS: RECENT-EVENT questions — competitor movement, latest news,
+  announcements, FDA / clinical-trial readouts, label changes, pipeline
+  deals. Requires a time-sensitive cue like "news", "recent", "latest",
+  "update", "movement", "headline", "announcement", "happening",
+  "FDA approval".
+- GENERAL: Everything else, INCLUDING factual / definitional questions
+  about who the competitors are, what Keytruda is, oncology / IO science,
+  industry trends, market access, strategy theory, or this application.
 
 Rules:
 - Return a comma-separated list of intents, no explanation.
 - Deduplicate.
 - Do NOT add GENERAL as a catch-all if the query already has a specific
   intent; only include GENERAL when there is a genuinely general question.
+- Do NOT classify as NEWS just because the word "competitor" appears.
+  NEWS requires an explicit recent-event cue.
 - If nothing specific is asked, return GENERAL.
 
 Examples:
@@ -86,8 +103,11 @@ Examples:
 - "top NJ opportunity and best marketing approach for them" -> OPPORTUNITY, MARKETING
 - "Opdivo news in NJ and how should we respond" -> NEWS, MARKETING
 - "What is Keytruda?" -> GENERAL
+- "Who are Keytruda's main competitors?" -> GENERAL
+- "What drugs compete with Keytruda?" -> GENERAL
 - "Explain PD-1 and summarize recent Imfinzi news" -> GENERAL, NEWS
 - "Give me top HCP in TX, best channel for them, and any BMS news" -> OPPORTUNITY, MARKETING, NEWS
+- "List Keytruda's competitors and give me recent Opdivo news" -> GENERAL, NEWS
 """.strip(),
 }
 
