@@ -388,6 +388,11 @@ with chat_col:
     # has a working path and we can roll back without a deploy.
     USE_LANGGRAPH = bool(st.secrets.get("USE_LANGGRAPH", False))
     USE_PLANNER = bool(st.secrets.get("USE_PLANNER", True))
+    # Debug instrumentation. When true, any silent fallback from the
+    # LangGraph path surfaces the full traceback as an st.error(...) banner
+    # in the chat column, instead of only being printed to Cloud logs.
+    # Safe to leave off in prod; turn on only while diagnosing routing.
+    DEBUG_ROUTING = bool(st.secrets.get("DEBUG_ROUTING", False))
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -796,14 +801,32 @@ with chat_col:
             return "✓ **finalize** — answer ready"
         return f"• **{node}**"
 
+    def _report_routing_error(stage: str, exc: BaseException) -> None:
+        """Log a LangGraph-path failure. Always prints to stdout (Cloud logs);
+        when DEBUG_ROUTING is on, also surfaces the traceback in the UI so
+        we can see *why* the graph silently fell back to the planner."""
+        import traceback as _tb
+        tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+        print(f"[LangGraph:{stage}] {type(exc).__name__}: {exc}")
+        print(tb_text)
+        if DEBUG_ROUTING:
+            st.error(
+                f"**LangGraph `{stage}` failed** — falling back to planner.\n\n"
+                f"`{type(exc).__name__}: {exc}`"
+            )
+            with st.expander("Traceback", expanded=False):
+                st.code(tb_text, language="text")
+
     def _run_with_langgraph(user_prompt: str, client: Groq) -> str | None:
         """Build and stream the LangGraph agent for one user turn.
         Returns assistant markdown, or None on hard failure so the caller
         can fall back to `_run_with_planner`."""
+        if DEBUG_ROUTING:
+            st.info("DEBUG_ROUTING is ON — entering `_run_with_langgraph`.")
         try:
             from src.agent_graph import build_agent_graph
         except ImportError as e:
-            print(f"LangGraph import error: {e}")
+            _report_routing_error("import", e)
             return None
 
         def _planner_fn(u, h, hist):
@@ -826,7 +849,7 @@ with chat_col:
                 news_snapshot_fn=_news_snapshot,
             )
         except Exception as e:  # noqa: BLE001
-            print(f"LangGraph build error: {e}")
+            _report_routing_error("build", e)
             return None
 
         cached = st.session_state.get("last_news_items") or []
@@ -863,11 +886,16 @@ with chat_col:
                     expanded=False,
                 )
         except Exception as e:  # noqa: BLE001
-            print(f"LangGraph stream error: {e}")
+            _report_routing_error("stream", e)
             return None
 
         final = final_state.get("final_answer")
         if not final:
+            if DEBUG_ROUTING:
+                st.warning(
+                    "LangGraph stream finished but `final_answer` was empty. "
+                    f"Keys in final_state: {list(final_state.keys())}"
+                )
             return None
 
         # LangGraph mode, like planner mode, doesn't use the legacy queue.
