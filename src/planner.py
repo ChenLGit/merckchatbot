@@ -45,11 +45,16 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "get_hcp_opportunity",
             "description": (
-                "Identify a high-propensity HCP target for Keytruda from the "
-                "internal targeting table. Use when the user asks about "
-                "provider targeting, top providers, which doctors to "
-                "prioritize, opportunity scorecards, SHAP / model drivers, "
-                "or looks up a specific NPI."
+                "Identify ONE specific high-propensity HCP and return their "
+                "opportunity scorecard (location, propensity score, model "
+                "drivers). Use when the user asks about a SPECIFIC provider, "
+                "the TOP provider in a state, who to prioritize, or looks "
+                "up an explicit 10-digit NPI. "
+                "DO NOT use this tool for aggregate / counting / "
+                "statistical questions like 'how many providers are in our "
+                "dataset', 'how many states do we cover', 'what specialties "
+                "do we track', or 'what's a typical HCP profile'. Those "
+                "are definitional questions that belong to `general_advisor`."
             ),
             "parameters": {
                 "type": "object",
@@ -170,12 +175,17 @@ TOOLS: list[dict[str, Any]] = [
             "name": "general_advisor",
             "description": (
                 "Answer a general Keytruda / oncology / PD-1 / commercial "
-                "strategy question that does NOT require an HCP lookup, "
-                "marketing-NBA calculation, or recent-news search. Use for "
-                "definitional questions ('who are our competitors?', 'what "
-                "is PD-1?', 'how does our propensity model work?'), "
-                "mechanism-of-action, market-access theory, strategy "
-                "overviews, or meta questions about this application."
+                "strategy question that does NOT require a single-HCP "
+                "lookup, marketing-NBA calculation, or recent-news search. "
+                "Use for: (a) definitional questions ('who are our "
+                "competitors?', 'what is PD-1?', 'how does our propensity "
+                "model work?'); (b) aggregate / counting / statistical "
+                "questions about the targeting dataset ('how many providers "
+                "are in our dataset', 'how many states do we cover', "
+                "'what specialties do we track', 'what's a typical HCP "
+                "profile'); (c) mechanism-of-action, market-access theory, "
+                "strategy overviews; (d) meta questions about this "
+                "application."
             ),
             "parameters": {
                 "type": "object",
@@ -243,7 +253,21 @@ Rules for calling tools:
    "recent", "update", "announcement", "movement", "FDA", "approval",
    "readout").
 6. Do NOT reorder or drop intents the user clearly asked about.
-7. CRITICAL — tool argument formatting:
+7. COUNTING vs LOOKUP disambiguation (important):
+   - Questions that ask HOW MANY / HOW MUCH / AVERAGE / TYPICAL / WHAT
+     SPECIALTIES / WHAT STATES etc. about the dataset are AGGREGATE /
+     STATISTICAL questions. Route them to `general_advisor`, NOT to
+     `get_hcp_opportunity`.
+   - Only use `get_hcp_opportunity` when the user asks about ONE
+     specific provider ("why is NPI ... a target", "who is the top HCP
+     in NJ", "tell me about this doctor").
+   - Examples:
+       "How many providers are in our dataset?"   → general_advisor
+       "What's a typical HCP profile?"            → general_advisor
+       "How many states do we cover?"             → general_advisor
+       "Why is NPI 1234567890 a priority?"        → get_hcp_opportunity
+       "Top provider in NJ?"                      → get_hcp_opportunity
+8. CRITICAL — tool argument formatting:
    - NEVER include a parameter with a value of `null`, `"null"`, `"None"`,
      empty string, or empty array. If you don't have a value, OMIT the
      key entirely from the JSON arguments object.
