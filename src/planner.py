@@ -21,9 +21,16 @@ if anything here fails.
 from __future__ import annotations
 
 import json
+import traceback
 from typing import Any
 
 from groq import Groq
+
+
+# Populated by `plan_actions` on a hard failure so the caller (and the UI)
+# can surface the actual exception instead of a generic "planner unavailable".
+# Cleared on every successful call.
+LAST_ERROR: dict[str, str] | None = None
 
 
 # -----------------------------------------------------------------------------
@@ -294,6 +301,8 @@ def plan_actions(
       - None if the planner call itself failed (caller should fall back
         to the legacy `src.router.get_intents` path).
     """
+    global LAST_ERROR
+    LAST_ERROR = None
     try:
         client = Groq(api_key=api_key)
 
@@ -358,5 +367,12 @@ def plan_actions(
         return plan
 
     except Exception as e:  # pragma: no cover - network / library failures
-        print(f"Planner Error (plan_actions): {e}")
+        tb = traceback.format_exc()
+        print(f"Planner Error (plan_actions): {type(e).__name__}: {e}")
+        print(tb)
+        LAST_ERROR = {
+            "type": type(e).__name__,
+            "message": str(e)[:500],
+            "traceback": tb[-2000:],
+        }
         return None

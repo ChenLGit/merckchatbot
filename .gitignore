@@ -1,5 +1,8 @@
 .streamlit/secrets.toml
 
+# Internal documentation — kept out of GitHub
+docs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

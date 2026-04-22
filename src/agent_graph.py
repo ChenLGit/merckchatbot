@@ -74,6 +74,7 @@ class AgentState(TypedDict, total=False):
     # ---- plan node output ----
     plan: list[dict]
     planner_failed: bool
+    planner_error: str
 
     # ---- execute node output ----
     outputs: list[str]
@@ -171,8 +172,22 @@ def build_agent_graph(
         )
         if plan is None:
             # Hard planner failure — keep flowing but mark it so the
-            # finalize node can surface a graceful message.
-            return {"plan": [], "planner_failed": True}
+            # finalize node can surface a graceful message. We also
+            # grab the underlying exception (if any) via the planner
+            # module's LAST_ERROR hook so DEBUG_ROUTING can show why.
+            err_msg = ""
+            try:
+                from src import planner as _planner_mod
+                last = getattr(_planner_mod, "LAST_ERROR", None)
+                if last:
+                    err_msg = f"{last.get('type', 'Error')}: {last.get('message', '')}"
+            except Exception:  # noqa: BLE001
+                err_msg = ""
+            return {
+                "plan": [],
+                "planner_failed": True,
+                "planner_error": err_msg,
+            }
         if not plan:
             plan = [{
                 "name": "general_advisor",
@@ -455,10 +470,12 @@ Rules:
     def finalize_node(state: AgentState) -> dict[str, Any]:
         """Stitch outputs into the final markdown answer."""
         if state.get("planner_failed"):
+            err = (state.get("planner_error") or "").strip()
+            tail = f"\n\n`{err}`" if err else ""
             return {
                 "final_answer": (
                     "_(Planner unavailable — please try rephrasing your "
-                    "question.)_"
+                    "question.)_" + tail
                 )
             }
 

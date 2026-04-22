@@ -768,6 +768,9 @@ with chat_col:
         out = out or {}
         if node == "plan":
             if out.get("planner_failed"):
+                err = (out.get("planner_error") or "").strip()
+                if err:
+                    return f"⚠️ **plan** — planner unavailable (`{err[:200]}`)"
                 return "⚠️ **plan** — planner unavailable"
             plan = out.get("plan") or []
             if not plan:
