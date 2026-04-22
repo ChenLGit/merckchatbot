@@ -436,7 +436,7 @@ with chat_col:
                 business terms. Limit to 2-3 sentences.
             """
             res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
                           {"role": "user", "content": analysis_prompt}],
                 temperature=0.3,
@@ -466,7 +466,7 @@ with chat_col:
                 Limit to 2-3 professional sentences.
             """
             res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
                           {"role": "user", "content": mkt_prompt}],
                 temperature=0.4,
@@ -521,7 +521,7 @@ with chat_col:
                 this scope; stay at the brand-strategy level>
             """
             res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
                           {"role": "user", "content": news_prompt}],
                 temperature=0.3,
@@ -557,7 +557,7 @@ with chat_col:
                 bullets or a short paragraph).
             """
             res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
                           {"role": "user", "content": general_prompt}],
                 temperature=0.4,
@@ -613,7 +613,7 @@ with chat_col:
                 track as a follow-up>
             """
             res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
                           {"role": "user", "content": summary_prompt}],
                 temperature=0.2,

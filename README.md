@@ -14,7 +14,7 @@ questions in one chat surface:
 4. **General Keytruda / oncology / commercial-strategy Q&A.**
 
 The app is deployed on Streamlit Community Cloud and uses Groq
-(`llama-3.3-70b-versatile`) as the primary LLM provider.
+(`llama-3.1-8b-instant`) as the primary LLM provider.
 
 ---
 
