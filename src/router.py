@@ -54,7 +54,7 @@ def get_intents(user_input, api_key):
             "List all intents in the query from {OPPORTUNITY, MARKETING, NEWS, GENERAL}, comma-separated.",
         )
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_input},
@@ -106,7 +106,7 @@ def get_intent(user_input, api_key):
         )
 
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_input},
