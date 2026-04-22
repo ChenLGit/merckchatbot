@@ -542,20 +542,31 @@ with chat_col:
         try:
             persona = build_system_prompt("brand_generalist")
             general_prompt = f"""
-                USER QUESTION:
-                {original_prompt}
+USER QUESTION:
+{original_prompt}
 
-                APPLICATION DATA SNAPSHOT (MerckAI_table.csv):
-                {dataset_snapshot}
+APPLICATION DATA SNAPSHOT (MerckAI_table.csv):
+{dataset_snapshot}
 
-                INSTRUCTION:
-                Answer the user's question as a Merck Keytruda brand advisor.
-                If the question is about oncology science, IO mechanism of action,
-                market dynamics, or general strategy, draw on your broader knowledge.
-                If the question could be answered with the data snapshot above,
-                use those numbers directly. Keep the response concise (under ~8
-                bullets or a short paragraph).
-            """
+INSTRUCTION:
+Answer the user's question as a Merck Keytruda brand advisor.
+If the question is about oncology science, IO mechanism of action,
+market dynamics, or general strategy, draw on your broader knowledge.
+If the question could be answered with the data snapshot above,
+use those numbers directly. Keep the response concise (under ~8 bullets
+or a short paragraph).
+
+FORMATTING RULES (strict):
+- Use GitHub-Flavored Markdown.
+- For lists, use `- ` at the start of EACH bullet, and put EACH bullet on
+  its OWN line separated by a real newline. Never put multiple bullets on
+  the same line separated only by spaces or the `•` character.
+- Leave a blank line between paragraphs and after section headers.
+- Example of a correctly formatted list:
+    - First point here.
+    - Second point here.
+    - Third point here.
+""".strip()
             res = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": persona},
