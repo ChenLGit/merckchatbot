@@ -55,14 +55,14 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "state": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": (
                             "Two-letter USPS state code (e.g. 'NJ', 'TX') if "
                             "the user named a state. Omit if unspecified."
                         ),
                     },
                     "npi": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": (
                             "Exact 10-digit NPI if the user quoted one. "
                             "Omit if unspecified."
@@ -87,8 +87,8 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "state": {"type": "string"},
-                    "npi": {"type": "string"},
+                    "state": {"type": ["string", "null"]},
+                    "npi": {"type": ["string", "null"]},
                 },
             },
         },
@@ -110,14 +110,14 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "state": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": (
                             "Two-letter USPS state code to scope the brief. "
                             "Omit for a national view."
                         ),
                     },
                     "competitors": {
-                        "type": "array",
+                        "type": ["array", "null"],
                         "description": (
                             "Subset of competitors the user explicitly "
                             "named. Omit to cover all four."
@@ -243,6 +243,12 @@ Rules for calling tools:
    "recent", "update", "announcement", "movement", "FDA", "approval",
    "readout").
 6. Do NOT reorder or drop intents the user clearly asked about.
+7. CRITICAL — tool argument formatting:
+   - NEVER include a parameter with a value of `null`, `"null"`, `"None"`,
+     empty string, or empty array. If you don't have a value, OMIT the
+     key entirely from the JSON arguments object.
+   - Example (GOOD):  {"competitors": ["opdivo"]}
+   - Example (BAD):   {"competitors": ["opdivo"], "state": null}
 
 You MUST respond with tool calls, not prose.
 """.strip()
@@ -347,9 +353,18 @@ def plan_actions(
                 args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
             except (json.JSONDecodeError, TypeError):
                 args = {}
+            if not isinstance(args, dict):
+                args = {}
+            # Smaller models (e.g. llama-3.1-8b) sometimes emit explicit
+            # `null` / empty values for optional params instead of omitting
+            # them. Strip those so downstream handlers see clean args.
+            args = {
+                k: v for k, v in args.items()
+                if v is not None and v != "" and v != []
+            }
             plan.append({
                 "name": name,
-                "args": args if isinstance(args, dict) else {},
+                "args": args,
                 "id": getattr(tc, "id", "") or "",
             })
 
@@ -367,6 +382,20 @@ def plan_actions(
         return plan
 
     except Exception as e:  # pragma: no cover - network / library failures
+        # Special-case: `tool_use_failed` means Groq's server-side tool-call
+        # validator rejected the model's output (typically because a smaller
+        # model emitted `null` for an optional param). The error payload
+        # contains the raw tool call the model wanted to make — we can
+        # parse it, strip the offending nulls, and recover instead of
+        # failing the whole turn.
+        recovered = _recover_from_tool_use_failed(e, user_input)
+        if recovered is not None:
+            print(
+                f"Planner recovered from tool_use_failed: "
+                f"{[p.get('name') for p in recovered]}"
+            )
+            return recovered
+
         tb = traceback.format_exc()
         print(f"Planner Error (plan_actions): {type(e).__name__}: {e}")
         print(tb)
@@ -376,3 +405,49 @@ def plan_actions(
             "traceback": tb[-2000:],
         }
         return None
+
+
+def _recover_from_tool_use_failed(
+    exc: Exception, user_input: str
+) -> list[dict] | None:
+    """Try to salvage a plan from a Groq `tool_use_failed` BadRequestError.
+
+    The error body contains `failed_generation`, which is the raw string the
+    model emitted, e.g.:
+        <function=get_competitor_news>{"competitors": ["opdivo"], "state": null}</function>
+
+    We regex-parse the function name and JSON args, drop any None/empty
+    values, and return a plan the caller can dispatch. Returns None if
+    this isn't a recoverable error.
+    """
+    import re
+
+    msg = str(exc)
+    if "tool_use_failed" not in msg and "did not match schema" not in msg:
+        return None
+
+    match = re.search(
+        r"<function=([a-zA-Z_][a-zA-Z0-9_]*)>\s*(\{.*?\})\s*</function>",
+        msg,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return None
+
+    name = match.group(1)
+    raw_args = match.group(2)
+    if name not in VALID_TOOL_NAMES:
+        return None
+
+    try:
+        args = json.loads(raw_args)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(args, dict):
+        return None
+
+    args = {
+        k: v for k, v in args.items()
+        if v is not None and v != "" and v != [] and v != "null"
+    }
+    return [{"name": name, "args": args, "id": ""}]
