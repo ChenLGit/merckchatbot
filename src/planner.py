@@ -290,7 +290,7 @@ def plan_actions(
     api_key: str,
     cached_headlines: list[dict] | None = None,
     history: list[dict] | None = None,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "llama-3.1-8b-instant",
 ) -> list[dict] | None:
     """
     Ask the LLM to emit an ordered list of tool calls for this user turn.
