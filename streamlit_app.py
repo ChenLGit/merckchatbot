@@ -315,6 +315,66 @@ def _format_marketing_markdown(scorecard, strategy_text=None):
 # ==========================================================================
 st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
 
+
+# ----------------------------------------------------------------------
+# Lightweight access log
+# ----------------------------------------------------------------------
+# Goal: just know "did anyone load the app, and when". Writes one line
+# per browser session to stdout, which Streamlit Cloud captures in
+# `Manage app → Logs`. No cookies, no third-party calls, no dependencies.
+# IPv4 is truncated to /24 (e.g. 73.12.8.0) so we never store a full
+# identifying address.
+def _anonymize_ip(ip: str) -> str:
+    if not ip or ip == "?":
+        return "?"
+    if "." in ip and ip.count(".") == 3:
+        a, b, c, _ = ip.split(".")
+        return f"{a}.{b}.{c}.0"
+    if ":" in ip:
+        return ":".join(ip.split(":")[:3]) + "::/48"
+    return "?"
+
+
+def _log_visit_once() -> None:
+    if st.session_state.get("_visit_logged"):
+        return
+    try:
+        from datetime import datetime, timezone
+        headers = getattr(st, "context", None)
+        headers = headers.headers if headers is not None else {}
+        raw_ip = (
+            headers.get("X-Forwarded-For", "?").split(",")[0].strip()
+            or "?"
+        )
+        ip = _anonymize_ip(raw_ip)
+        ua = (headers.get("User-Agent") or "?")[:120]
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(f"[VISIT] {ts} ip={ip} ua=\"{ua}\"")
+    except Exception as _e:  # noqa: BLE001
+        print(f"[VISIT] log_failed: {type(_e).__name__}: {_e}")
+    finally:
+        st.session_state["_visit_logged"] = True
+
+
+def _log_question(prompt_text: str) -> None:
+    try:
+        from datetime import datetime, timezone
+        headers = getattr(st, "context", None)
+        headers = headers.headers if headers is not None else {}
+        raw_ip = (
+            headers.get("X-Forwarded-For", "?").split(",")[0].strip()
+            or "?"
+        )
+        ip = _anonymize_ip(raw_ip)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        snippet = (prompt_text or "").replace("\n", " ").strip()[:120]
+        print(f"[Q]     {ts} ip={ip} q=\"{snippet}\"")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_log_visit_once()
+
 @st.cache_data
 def load_data():
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
@@ -1057,6 +1117,7 @@ FORMATTING RULES (strict):
         return content
 
     if prompt := st.chat_input("Ask about opportunities, marketing, competitor news, or anything Keytruda..."):
+        _log_question(prompt)
         # Keep every per-turn UI element (user bubble, st.status progress
         # panel, spinners, assistant bubble) rendered *inside* chat_box
         # so the whole chat column stays within a fixed height budget
