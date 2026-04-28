@@ -135,7 +135,7 @@ def build_agent_graph(
     dispatch_fn: DispatchFn,
     verify_npi_fn: VerifyNpiFn,
     groq_api_key: str,
-    model: str = "llama-3.1-8b-instant",
+    model: str = "llama-3.3-70b-versatile",
     news_snapshot_fn: NewsSnapshotFn | None = None,
 ):
     """Build and compile the 6-node agent graph.
