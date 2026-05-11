@@ -1,11 +1,15 @@
 import pandas as pd
 import plotly.express as px
 
+from .brand_config import BRAND
+
+
 def plot_executive_map(df):
     """
     Final Executive Version of the US State Map:
     - Centers title specifically to the map chart.
-    - Uses Merck Branding (#00857c) for the high-end color scale.
+    - Uses the active brand's primary color (BRAND['color_primary'])
+      for the high-end of the choropleth color scale.
     - Features accurate High Propensity targeting (pred_class == 1).
     - Formats all tooltips as integers while maintaining calculation accuracy.
     """
@@ -50,8 +54,8 @@ def plot_executive_map(df):
         locationmode="USA-states",
         color='Total Providers',
         scope="usa",
-        # Custom color scale: Neutral Light Grey to Merck Heritage Green
-        color_continuous_scale=["#E5E7E9", "#00857c"],
+        # Custom color scale: neutral light grey to the active brand's primary color.
+        color_continuous_scale=["#E5E7E9", BRAND["color_primary"]],
         hover_name='State',
         custom_data=[
             'Total Providers', 

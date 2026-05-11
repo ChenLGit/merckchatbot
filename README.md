@@ -1,7 +1,8 @@
-# Merck Keytruda — Provider Targeting Strategy AI
+# Bristol Myers Squibb · Opdivo — Provider Targeting & Marketing Strategy AI
 
-An agentic Streamlit application that pairs an internal HCP-propensity model
-with an LLM-driven advisory layer to answer four classes of commercial
+An agentic Streamlit application built for the **Bristol Myers Squibb (BMS)
+marketing team for Opdivo (nivolumab)**. It pairs an internal HCP-propensity
+model with an LLM-driven advisory layer to answer four classes of commercial
 questions in one chat surface:
 
 1. **HCP opportunity targeting** — which provider to prioritize in a given
@@ -9,9 +10,9 @@ questions in one chat surface:
 2. **Marketing strategy (Next-Best-Action)** — per-HCP channel / timing /
    message recommendations.
 3. **Competitor news + share context** — live DuckDuckGo news search for
-   Opdivo / Tecentriq / Imfinzi / Libtayo, fused with internal billing-mix
-   share from the CSV.
-4. **General Keytruda / oncology / commercial-strategy Q&A.**
+   Keytruda / Tecentriq / Imfinzi / Libtayo, fused with internal billing-mix
+   share from the targeting dataset.
+4. **General Opdivo / oncology / commercial-strategy Q&A.**
 
 The app is deployed on Streamlit Community Cloud and uses Groq
 (`llama-3.3-70b-versatile`) as the primary LLM provider.
@@ -77,7 +78,52 @@ GROQ_API_KEY = "your-groq-key"
 USE_LANGGRAPH  = true    # top-of-stack agentic path
 USE_PLANNER    = true    # middle tool-calling path
 DEBUG_ROUTING  = false   # surface tracebacks in the UI; keep off in prod
+
+# Brand profile (defaults to "bms_opdivo"). See src/brand_config.py.
+# ACTIVE_BRAND = "merck_keytruda"
 ```
+
+---
+
+## Brand profile (Opdivo vs Keytruda)
+
+The application ships with two production-ready brand profiles, defined
+in [`src/brand_config.py`](src/brand_config.py):
+
+| Key | Persona | "Our drug" | Color |
+|---|---|---|---|
+| `bms_opdivo` *(default)* | Bristol Myers Squibb marketing team for Opdivo (nivolumab) | Opdivo | `#BE2BBB` (BMS purple) |
+| `merck_keytruda` | Merck & Co. marketing team for Keytruda (pembrolizumab) | Keytruda | `#00857c` (Merck heritage green) |
+
+Switching brand identity is a one-config-value change — no code edit, no
+redeploy. Every layer (UI header, color scheme, system personas, planner
+prompts, competitor sets, "our drug" billing-share column, LangGraph
+guardrail tokens, judge prompts) re-renders from the active profile at
+import time.
+
+**To switch:**
+
+- **Streamlit Cloud / `.streamlit/secrets.toml`:**
+  ```toml
+  ACTIVE_BRAND = "merck_keytruda"
+  ```
+- **Local shell (Windows PowerShell):**
+  ```powershell
+  $env:ACTIVE_BRAND = "merck_keytruda"
+  streamlit run streamlit_app.py
+  ```
+- **Local shell (macOS / Linux):**
+  ```bash
+  ACTIVE_BRAND=merck_keytruda streamlit run streamlit_app.py
+  ```
+- **Permanent default:** edit `DEFAULT_BRAND_KEY` in `src/brand_config.py`.
+
+The underlying propensity model output (`pred_class`, `pred_proba`, SHAP
+drivers in `data/raw/MerckAI_table.csv`) is intentionally brand-agnostic
+and is reused as-is for whichever brand is active. The CSV already
+contains per-drug billing-share columns for both Opdivo and Keytruda, so
+each brand profile points at its own "our drug" column without any data
+change required.
 
 Then:
 

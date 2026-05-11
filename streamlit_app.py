@@ -1,5 +1,11 @@
 # =============================================================================
-# Merck Keytruda Streamlit Application
+# Provider Targeting & Marketing Strategy AI — Streamlit Application
+#
+# All brand-specific identity (company, drug, color, competitor set,
+# "our drug" CSV column) is sourced from `src.brand_config.BRAND`. To
+# swap brands (e.g. flip back from BMS Opdivo to Merck Keytruda), set
+# the `ACTIVE_BRAND` Streamlit secret or environment variable to one of
+# the keys defined in `src/brand_config.py`. No code change required.
 # =============================================================================
 
 # -------------------
@@ -16,6 +22,7 @@ src_path = os.path.join(current_dir, 'src')
 if src_path not in sys.path:
     sys.path.append(src_path)
 
+from src.brand_config import BRAND
 from src.router import get_intent, get_intents
 from src.planner import plan_actions
 from src.visualizations import plot_executive_map
@@ -28,7 +35,10 @@ except ImportError:
     SYSTEM_PERSONAS = {}
 
     def build_system_prompt(role_key):  # type: ignore[no-redef]
-        return SYSTEM_PERSONAS.get(role_key, "You are a Merck Keytruda brand advisor.")
+        return SYSTEM_PERSONAS.get(
+            role_key,
+            f"You are a {BRAND['display']} brand advisor.",
+        )
 
 # ---------------------------------
 # Helpers: Format Outputs
@@ -191,8 +201,8 @@ def _fetch_article_text(url, max_chars=6000):
             timeout=8,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; MerckKeytrudaBot/1.0; "
-                    "+https://merck.com)"
+                    f"Mozilla/5.0 (compatible; {BRAND['user_agent']}; "
+                    f"{BRAND['user_agent_url']})"
                 )
             },
         )
@@ -313,10 +323,15 @@ def _format_marketing_markdown(scorecard, strategy_text=None):
 # ==========================================================================
 # 1. SETUP & DATA LOADING SECTION
 # ==========================================================================
-st.set_page_config(page_title="Merck Data Science Hub", layout="wide")
+st.set_page_config(page_title=BRAND["page_title"], layout="wide")
 
 @st.cache_data
 def load_data():
+    # NOTE: the source CSV file name (`MerckAI_table.csv`) is preserved as a
+    # historical artifact of the underlying targeting model. The data itself
+    # is brand-agnostic (provider-level Medicare billing + per-drug share for
+    # ALL IO drugs in the basket), so the same CSV serves whichever brand
+    # profile is active in `src/brand_config.py`.
     data_path = os.path.join(current_dir, 'data', 'raw', 'MerckAI_table.csv')
     if not os.path.exists(data_path):
         st.error(f"Data file not found at: {data_path}")
@@ -345,16 +360,19 @@ main_col, chat_col = st.columns([1.5, 1], gap="medium")
 with main_col:
     header_left, header_right = st.columns([3.5, 1], vertical_alignment="top")
     with header_left:
-        st.markdown("""
+        st.markdown(
+            f"""
             <div style="text-align: left;">
-                <div style="font-family: sans-serif; font-size: 3.8rem; font-weight: bold; color: #00857c; line-height: 1.1; margin-bottom: 8px;">
-                    Merck Keytruda
+                <div style="font-family: sans-serif; font-size: 3.8rem; font-weight: bold; color: {BRAND['color_primary']}; line-height: 1.1; margin-bottom: 8px;">
+                    {BRAND['display']}
                 </div>
-                <div style="font-family: sans-serif; font-size: 1.8rem; font-weight: normal; color: #555;">
-                    Provider Targeting Strategy AI Application
+                <div style="font-family: sans-serif; font-size: 1.6rem; font-weight: normal; color: #555;">
+                    {BRAND['subtitle']}
                 </div>
             </div>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
     with header_right:
         st.markdown("""
             <div style="background-color: #f0f2f6; padding: 12px 18px; border-radius: 8px; border: 1px solid #dcdcdc; margin-top: 15px;">
@@ -432,8 +450,8 @@ with chat_col:
 
                 INSTRUCTION:
                 Briefly explain why these drivers make this HCP a high-priority
-                target for Keytruda. Translate technical variables into strategic
-                business terms. Limit to 2-3 sentences.
+                target for {BRAND['drug']}. Translate technical variables into
+                strategic business terms. Limit to 2-3 sentences.
             """
             res = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -516,9 +534,9 @@ with chat_col:
                 headlines above; name the competitor(s); if news is sparse
                 for this scope, say so plainly>
 
-                **🔍 Competitor impact on Keytruda:** <concise read on
-                potential impact to Keytruda's position / market share at
-                this scope; stay at the brand-strategy level>
+                **🔍 Competitor impact on {BRAND['drug']}:** <concise read on
+                potential impact to {BRAND['drug']}'s position / market share
+                at this scope; stay at the brand-strategy level>
             """
             res = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -545,11 +563,11 @@ with chat_col:
 USER QUESTION:
 {original_prompt}
 
-APPLICATION DATA SNAPSHOT (MerckAI_table.csv):
+APPLICATION DATA SNAPSHOT (HCP targeting table):
 {dataset_snapshot}
 
 INSTRUCTION:
-Answer the user's question as a Merck Keytruda brand advisor.
+Answer the user's question as a {BRAND['display']} brand advisor.
 If the question is about oncology science, IO mechanism of action,
 market dynamics, or general strategy, draw on your broader knowledge.
 If the question could be answered with the data snapshot above,
@@ -586,7 +604,7 @@ FORMATTING RULES (strict):
 
     def _answer_news_summary(item, client: Groq) -> str:
         """Pull the article body for a cached headline and ask the LLM for a
-        short Keytruda-relevant summary. Falls back to the DuckDuckGo snippet
+        short brand-relevant summary. Falls back to the DuckDuckGo snippet
         if the page can't be fetched."""
         with st.spinner("Reading the article..."):
             article_text = _fetch_article_text(item.get("url") or "")
@@ -612,14 +630,14 @@ FORMATTING RULES (strict):
                 {article_text}
 
                 TASK:
-                Summarize the article for a Merck Keytruda brand strategist.
+                Summarize the article for a {BRAND['display']} brand strategist.
                 Output EXACTLY these three short sections, each 1-2 sentences,
                 and NOTHING ELSE. Do not reference any NPI, provider, city,
                 preferred channel, or engagement recency.
 
                 **📝 What the article says:** <core facts from the content above>
-                **🔍 Why it matters for Keytruda:** <potential impact on our
-                position, pipeline, or competitive landscape>
+                **🔍 Why it matters for {BRAND['drug']}:** <potential impact on
+                our position, pipeline, or competitive landscape>
                 **🧭 What to watch next:** <the one thing a brand team should
                 track as a follow-up>
             """
@@ -1056,7 +1074,9 @@ FORMATTING RULES (strict):
             st.session_state.pending_followup = False
         return content
 
-    if prompt := st.chat_input("Ask about opportunities, marketing, competitor news, or anything Keytruda..."):
+    if prompt := st.chat_input(
+        f"Ask about opportunities, marketing, competitor news, or anything {BRAND['drug']}..."
+    ):
         # Keep every per-turn UI element (user bubble, st.status progress
         # panel, spinners, assistant bubble) rendered *inside* chat_box
         # so the whole chat column stays within a fixed height budget

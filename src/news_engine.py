@@ -5,11 +5,15 @@ NEWS intent engine.
 Combines two signals so the LLM can answer questions like
 "give me top competitor's movement in NJ and what should I do for marketing":
 
-1. Internal (MerckAI_table.csv): per-state average billing share for Keytruda
+1. Internal (targeting CSV): per-state average billing share for OUR drug
    and each competitor drug, plus the top-propensity HCP in that state from
    the existing RAG engine (so marketing advice is grounded in a real NPI).
 2. External (DuckDuckGo news search, no API key): recent articles about the
    competitor drugs / manufacturers.
+
+The competitor set, "our drug" column, and share label are all sourced
+from `src.brand_config.BRAND`, so this module works for whichever brand
+profile is active without any changes here.
 
 Returns a plain dict so the Streamlit layer can format and persist it.
 """
@@ -18,53 +22,20 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .brand_config import BRAND
 from .rag_engine import _infer_state_from_query, get_hcp_scorecard
 
 
 # -----------------------------------------------------------------------------
-# Competitor metadata
+# Competitor metadata (re-exported from the active brand profile)
 # -----------------------------------------------------------------------------
 # The CSV has slightly inconsistent column names (e.g. "opdivo_br   _pct"
 # with extra spaces), so we match columns by stripped-lowercase tokens.
-COMPETITORS = {
-    "opdivo": {
-        "brand": "Opdivo",
-        "generic": "nivolumab",
-        "company": "Bristol-Myers Squibb",
-        "column_token": "hcpcs_category_opdivo_br_pct",
-        "aliases": ["opdivo", "bms", "bristol", "nivolumab"],
-        # Tokens that, if present in the result's title or body, mark the
-        # article as actually about this drug. Prevents generic-"competitor"
-        # noise (e.g. sports competitors) from leaking into results.
-        "match_tokens": ["opdivo", "nivolumab", "bristol-myers", "bristol myers", "bms"],
-    },
-    "tecentriq": {
-        "brand": "Tecentriq",
-        "generic": "atezolizumab",
-        "company": "Roche / Genentech",
-        "column_token": "hcpcs_category_tecentriq_br_pct",
-        "aliases": ["tecentriq", "roche", "genentech", "atezolizumab"],
-        "match_tokens": ["tecentriq", "atezolizumab", "genentech", "roche"],
-    },
-    "imfinzi": {
-        "brand": "Imfinzi",
-        "generic": "durvalumab",
-        "company": "AstraZeneca",
-        "column_token": "hcpcs_category_imfinzi_br_pct",
-        "aliases": ["imfinzi", "astrazeneca", "durvalumab"],
-        "match_tokens": ["imfinzi", "durvalumab", "astrazeneca", "astra zeneca"],
-    },
-    "libtayo": {
-        "brand": "Libtayo",
-        "generic": "cemiplimab",
-        "company": "Regeneron / Sanofi",
-        "column_token": "hcpcs_category_libtayo_br_pct",
-        "aliases": ["libtayo", "regeneron", "sanofi", "cemiplimab"],
-        "match_tokens": ["libtayo", "cemiplimab", "regeneron", "sanofi"],
-    },
-}
+COMPETITORS: dict = BRAND["competitors"]
 
-MERCK_COLUMN_TOKEN = "hcpcs_category_keytruda_br_pct"
+# Token for the column that represents OUR drug's billing share.
+OUR_DRUG_COLUMN_TOKEN: str = BRAND["our_drug_column_token"]
+OUR_DRUG_SHARE_LABEL: str = BRAND["our_drug_share_label"]
 
 
 def _resolve_column(df: pd.DataFrame, token: str) -> str | None:
@@ -85,7 +56,7 @@ def detect_competitors(query: str) -> list[str]:
 
 def compute_state_share(df: pd.DataFrame, state: str | None, competitor_keys: list[str]) -> dict:
     """
-    Average billing-share (mean %) for Keytruda and each competitor in the
+    Average billing-share (mean %) for OUR drug and each competitor in the
     given state (or full dataset if state is None). Values are 0-100 scale
     if the CSV stores percents, or 0-1 if stored as proportions — we just
     surface them as-is and let the LLM reason about relative magnitude.
@@ -102,9 +73,9 @@ def compute_state_share(df: pd.DataFrame, state: str | None, competitor_keys: li
     if scope.empty:
         return share
 
-    merck_col = _resolve_column(df, MERCK_COLUMN_TOKEN)
-    if merck_col is not None:
-        share["Keytruda (Merck)"] = float(pd.to_numeric(scope[merck_col], errors="coerce").mean())
+    our_col = _resolve_column(df, OUR_DRUG_COLUMN_TOKEN)
+    if our_col is not None:
+        share[OUR_DRUG_SHARE_LABEL] = float(pd.to_numeric(scope[our_col], errors="coerce").mean())
 
     for key in competitor_keys:
         meta = COMPETITORS[key]

@@ -1,6 +1,8 @@
 import re
 
 from groq import Groq
+
+from .brand_config import BRAND
 try:
     # We import the dictionary here. 
     # If there's an issue with prompts.py, we catch it immediately.
@@ -9,6 +11,19 @@ except ImportError:
     ROUTING_PROMPTS = {}
 
 INTENT_PRIORITY = ["GENERAL", "OPPORTUNITY", "MARKETING", "NEWS"]
+
+# Brand-specific possessives the user might write to ask a definitional
+# question about OUR drug or company (e.g. "name keytruda's competitors",
+# "name bms's main rivals"). Built dynamically so adding a brand profile
+# automatically extends the cue list.
+_BRAND_POSSESSIVES = "|".join(
+    re.escape(p)
+    for p in {
+        f"{BRAND['drug'].lower()}'s",
+        f"{BRAND['company_short'].lower()}'s",
+        f"{BRAND['company'].split()[0].lower()}'s",
+    }
+)
 
 # Cues that indicate the user is explicitly asking a GENERAL / definitional
 # question, even if they ALSO ask about a specific intent in the same sentence.
@@ -19,7 +34,7 @@ _GENERAL_CUE_PATTERNS = [
     r"\bwho are\b",
     r"\bwhat are\b",
     r"\bwhat is\b",
-    r"\bname (the|all|keytruda's|merck's)\b",
+    rf"\bname (the|all|{_BRAND_POSSESSIVES})\b",
     r"\bdefine\b",
     r"\bexplain\b",
     r"\bhow does\b",

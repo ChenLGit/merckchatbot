@@ -27,8 +27,8 @@ Nodes:
   4. competitor_claim_check  : Responsible-AI guardrail #2. Uses
                                LLM-as-judge to fact-check any SPECIFIC,
                                VERIFIABLE claim about a competitor drug
-                               (Opdivo, Tecentriq, Imfinzi, Libtayo)
-                               against the cached news body provided by
+                               (the active brand's competitor set) against
+                               the cached news body provided by
                                `news_snapshot_fn`. Generic/qualitative
                                statements are ignored.
   5. reflect                 : LLM-as-judge on coverage. Routes back to
@@ -58,6 +58,32 @@ from typing import Any, Callable, Literal, TypedDict
 
 from groq import Groq
 from langgraph.graph import END, START, StateGraph
+
+from .brand_config import BRAND, competitor_match_tokens
+
+
+# Brand-derived strings used inside the LLM-as-judge prompts and the
+# cheap competitor-mention short-circuit. Computed once at import.
+_DRUG = BRAND["drug"]
+_DRUG_GENERIC = BRAND["drug_generic"]
+_COMPANY_SHORT = BRAND["company_short"]
+_DISPLAY = BRAND["display"]
+
+# Build a human-readable competitor descriptor like
+#   "Keytruda / pembrolizumab, Tecentriq / atezolizumab, ..."
+# and a maker descriptor like
+#   "Merck, Roche/Genentech, AstraZeneca, Regeneron/Sanofi"
+# from the active brand's competitor metadata.
+_COMPETITOR_DRUG_DESC = ", ".join(
+    f"{c['brand']} / {c['generic']}" for c in BRAND["competitors"].values()
+)
+_COMPETITOR_MAKER_DESC = ", ".join(
+    c["company"] for c in BRAND["competitors"].values()
+)
+# A representative competitor drug + maker for the in-prompt examples.
+_first_comp = next(iter(BRAND["competitors"].values()))
+_EXAMPLE_COMPETITOR_DRUG = _first_comp["brand"]
+_EXAMPLE_COMPETITOR_MAKER = _first_comp["company"].split("/")[0].strip()
 
 
 # -----------------------------------------------------------------------------
@@ -107,16 +133,10 @@ _NPI_PATTERN = re.compile(r"(?<!\d)(\d{10})(?!\d)")
 # Tokens that, when present in a draft output, indicate the assistant
 # referenced a direct competitor drug or manufacturer. Used as a cheap
 # short-circuit so the claim-check LLM call only fires when relevant.
-_COMPETITOR_TOKENS: tuple[str, ...] = (
-    "opdivo", "nivolumab",
-    "tecentriq", "atezolizumab",
-    "imfinzi", "durvalumab",
-    "libtayo", "cemiplimab",
-    "bristol-myers", "bristol myers", "bms",
-    "genentech", "roche",
-    "astrazeneca", "astra zeneca",
-    "regeneron", "sanofi",
-)
+# Sourced from the active brand profile so flipping ACTIVE_BRAND swaps
+# the token set automatically (e.g. "keytruda" becomes a competitor
+# trigger under the BMS profile but is excluded under the Merck profile).
+_COMPETITOR_TOKENS: tuple[str, ...] = competitor_match_tokens()
 
 
 # Type aliases for the injected dependencies.
@@ -304,10 +324,9 @@ def build_agent_graph(
         try:
             client = Groq(api_key=groq_api_key)
             judge_prompt = f"""
-You are fact-checking a Merck Keytruda brand assistant's DRAFT answer for
-claims about competitor drugs (Opdivo / nivolumab, Tecentriq / atezolizumab,
-Imfinzi / durvalumab, Libtayo / cemiplimab) or their manufacturers
-(BMS, Roche/Genentech, AstraZeneca, Regeneron/Sanofi).
+You are fact-checking a {_DISPLAY} brand assistant's DRAFT answer for
+claims about competitor drugs ({_COMPETITOR_DRUG_DESC}) or their
+manufacturers ({_COMPETITOR_MAKER_DESC}).
 
 DRAFT ANSWER:
 {draft}
@@ -317,20 +336,21 @@ AVAILABLE NEWS EVIDENCE (the ONLY ground truth for recent-event claims):
 
 TASK:
 Identify every SPECIFIC, VERIFIABLE claim about a competitor drug or
-maker in the draft — e.g. "FDA approved X on DATE", "Opdivo showed a 20%
-response rate in trial Y", "BMS announced Y partnership with Z". For
-each, decide whether it is CONTRADICTED or INVENTED relative to the
-evidence above.
+maker in the draft — e.g. "FDA approved X on DATE", "{_EXAMPLE_COMPETITOR_DRUG}
+showed a 20% response rate in trial Y", "{_EXAMPLE_COMPETITOR_MAKER} announced
+Y partnership with Z". For each, decide whether it is CONTRADICTED or
+INVENTED relative to the evidence above.
 
 IGNORE (treat as OK):
-- Generic / qualitative statements ("Opdivo is a PD-1 inhibitor",
-  "Opdivo remains a key competitor", "the IO space is crowded").
+- Generic / qualitative statements ("{_EXAMPLE_COMPETITOR_DRUG} is a PD-1
+  inhibitor", "{_EXAMPLE_COMPETITOR_DRUG} remains a key competitor",
+  "the IO space is crowded").
 - Claims that merely ADD DETAIL beyond what a headline snippet shows
   (e.g. draft names a trial readout date that isn't in the snippet).
   News snippets here are truncated to ~500 chars; the full article
   almost certainly contains more. Only flag if the added detail is
   clearly fabricated or contradicted.
-- Keytruda-only statements (we only fact-check competitor claims here).
+- {_DRUG}-only statements (we only fact-check competitor claims here).
 - Market-share / billing-mix numbers (sourced from our own CSV, not news).
 
 Respond with JSON ONLY, matching this schema:
@@ -424,7 +444,7 @@ Respond with JSON ONLY, matching this schema:
         try:
             client = Groq(api_key=groq_api_key)
             judge_prompt = f"""
-You are a QA reviewer for a Merck Keytruda strategy assistant.
+You are a QA reviewer for a {_DISPLAY} strategy assistant.
 
 USER QUESTION:
 {state.get('user_prompt', '')}

@@ -26,6 +26,32 @@ from typing import Any
 
 from groq import Groq
 
+from .brand_config import (
+    BRAND,
+    competitor_brand_list,
+    competitor_brand_names,
+    competitor_keys,
+)
+
+
+# Brand-derived helpers used in tool descriptions and the system prompt.
+_DRUG = BRAND["drug"]
+_COMPANY = BRAND["company"]
+_DRUG_GENERIC = BRAND["drug_generic"]
+_DISPLAY = BRAND["display"]
+_COMPETITOR_KEYS_LIST = competitor_keys()                  # ["keytruda", "tecentriq", ...]
+_COMPETITOR_DISPLAY_NAMES = competitor_brand_names()       # ["Keytruda", ...]
+_COMPETITOR_LIST_INLINE = competitor_brand_list()          # "Keytruda (Merck), Tecentriq (Roche), ..."
+_COMPETITOR_DESC = ", ".join(_COMPETITOR_DISPLAY_NAMES)    # "Keytruda, Tecentriq, Imfinzi, Libtayo"
+# A representative competitor brand for the summarize_article example
+# (avoids hard-coding "Opdivo" / "Keytruda" in the description).
+_EXAMPLE_COMPETITOR = next(
+    (n for n in _COMPETITOR_DISPLAY_NAMES if n.lower() != "tecentriq"),
+    _COMPETITOR_DISPLAY_NAMES[0],
+)
+# An example competitor key for the GOOD/BAD JSON formatting examples.
+_EXAMPLE_COMPETITOR_KEY = _COMPETITOR_KEYS_LIST[0] if _COMPETITOR_KEYS_LIST else "keytruda"
+
 
 # Populated by `plan_actions` on a hard failure so the caller (and the UI)
 # can surface the actual exception instead of a generic "planner unavailable".
@@ -103,13 +129,13 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "get_competitor_news",
             "description": (
-                "Fetch recent competitor news (Opdivo, Tecentriq, Imfinzi, "
-                "Libtayo) and the internal billing-share mix for the "
-                "requested scope. Use for any RECENT-EVENT question about "
-                "competitor movement, market share shifts, FDA approvals, "
-                "clinical-trial readouts, label changes, or pipeline deals. "
-                "Do NOT use for purely definitional questions like 'who are "
-                "our competitors' — use general_advisor for those."
+                f"Fetch recent competitor news ({_COMPETITOR_DESC}) and the "
+                "internal billing-share mix for the requested scope. Use for "
+                "any RECENT-EVENT question about competitor movement, market "
+                "share shifts, FDA approvals, clinical-trial readouts, label "
+                "changes, or pipeline deals. Do NOT use for purely "
+                "definitional questions like 'who are our competitors' — use "
+                "general_advisor for those."
             ),
             "parameters": {
                 "type": "object",
@@ -129,12 +155,7 @@ TOOLS: list[dict[str, Any]] = [
                         ),
                         "items": {
                             "type": "string",
-                            "enum": [
-                                "opdivo",
-                                "tecentriq",
-                                "imfinzi",
-                                "libtayo",
-                            ],
+                            "enum": _COMPETITOR_KEYS_LIST,
                         },
                     },
                 },
@@ -149,8 +170,8 @@ TOOLS: list[dict[str, Any]] = [
                 "Summarize ONE of the previously shown news headlines. Only "
                 "use this if the user has already been shown a list of "
                 "headlines AND is now asking about a specific one (e.g. "
-                "'tell me more about #2', 'summarize the Opdivo FDA "
-                "article', 'deep dive on the first headline'). The caller "
+                f"'tell me more about #2', 'summarize the {_EXAMPLE_COMPETITOR} "
+                "FDA article', 'deep dive on the first headline'). The caller "
                 "will provide the cached headline list with indices in the "
                 "system message."
             ),
@@ -174,7 +195,7 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "general_advisor",
             "description": (
-                "Answer a general Keytruda / oncology / PD-1 / commercial "
+                f"Answer a general {_DRUG} / oncology / PD-1 / commercial "
                 "strategy question that does NOT require a single-HCP "
                 "lookup, marketing-NBA calculation, or recent-news search. "
                 "Use for: (a) definitional questions ('who are our "
@@ -212,13 +233,12 @@ VALID_TOOL_NAMES: set[str] = {t["function"]["name"] for t in TOOLS}
 # -----------------------------------------------------------------------------
 # Planner system prompt
 # -----------------------------------------------------------------------------
-PLANNER_SYSTEM_PROMPT = """
-You are the Merck Keytruda Strategy Planner.
+PLANNER_SYSTEM_PROMPT = f"""
+You are the {_DISPLAY} Strategy Planner.
 
 Ground truth (never violate):
-- Keytruda (pembrolizumab) is OUR drug (Merck). It is NEVER a competitor.
-- Keytruda's direct competitors are Opdivo (BMS), Tecentriq (Roche /
-  Genentech), Imfinzi (AstraZeneca), and Libtayo (Regeneron / Sanofi).
+- {_DRUG} ({_DRUG_GENERIC}) is OUR drug ({_COMPANY}). It is NEVER a competitor.
+- {_DRUG}'s direct competitors are {_COMPETITOR_LIST_INLINE}.
 
 Your job is to decide which internal tools to call to answer the user's
 question. You have five tools available:
@@ -229,7 +249,7 @@ question. You have five tools available:
   - summarize_article      : Deep-dive on one previously shown headline.
   - general_advisor        : Everything else, including definitional
                              questions about who our competitors are, what
-                             Keytruda is, PD-1 / PD-L1 mechanism, market
+                             {_DRUG} is, PD-1 / PD-L1 mechanism, market
                              access, and meta questions.
 
 Rules for calling tools:
@@ -237,8 +257,9 @@ Rules for calling tools:
    prose. If the question is purely conversational or definitional, call
    `general_advisor`.
 2. If the user asks several things in one turn (e.g. "top HCP in NJ AND
-   recent Opdivo news AND how to market to them"), emit tool calls in the
-   order a human would read the answers: opportunity → marketing → news.
+   recent {_EXAMPLE_COMPETITOR} news AND how to market to them"), emit tool
+   calls in the order a human would read the answers:
+   opportunity → marketing → news.
 3. Extract structured arguments whenever possible:
      - `state` as a two-letter USPS code.
      - `npi` only if the user quotes a 10-digit number.
@@ -271,8 +292,8 @@ Rules for calling tools:
    - NEVER include a parameter with a value of `null`, `"null"`, `"None"`,
      empty string, or empty array. If you don't have a value, OMIT the
      key entirely from the JSON arguments object.
-   - Example (GOOD):  {"competitors": ["opdivo"]}
-   - Example (BAD):   {"competitors": ["opdivo"], "state": null}
+   - Example (GOOD):  {{"competitors": ["{_EXAMPLE_COMPETITOR_KEY}"]}}
+   - Example (BAD):   {{"competitors": ["{_EXAMPLE_COMPETITOR_KEY}"], "state": null}}
 
 You MUST respond with tool calls, not prose.
 """.strip()
@@ -438,7 +459,7 @@ def _recover_from_tool_use_failed(
 
     The error body contains `failed_generation`, which is the raw string the
     model emitted, e.g.:
-        <function=get_competitor_news>{"competitors": ["opdivo"], "state": null}</function>
+        <function=get_competitor_news>{"competitors": ["<comp_key>"], "state": null}</function>
 
     We regex-parse the function name and JSON args, drop any None/empty
     values, and return a plan the caller can dispatch. Returns None if
